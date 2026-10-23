@@ -19,7 +19,7 @@ source.main_file = main.py
 
 # (list) Requisitos de tu aplicación
 # Nota: 'jnius' solo funciona en Android, pero Buildozer lo maneja bien.
-requirements = python3,kivy,openpyxl,jnius
+requirements = python3,kivy,openpyxl,pyjnius
 
 # (str) Versión de la aplicación
 version = 1.0

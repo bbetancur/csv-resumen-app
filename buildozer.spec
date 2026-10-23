@@ -19,7 +19,10 @@ source.dir = .
 source.main_file = main.py
 
 # (list) Requisitos de tu aplicación
-requirements = python3,kivy,openpyxl,pyjnius
+requirements = python3==3.11.9,kivy,openpyxl,pyjnius
+
+# (str) Rama de python-for-android a utilizar (añade esta línea al final)
+p4a.branch = master
 
 # (bool) Indicate if you accept the Android SDK license
 android.accept_sdk_license = True

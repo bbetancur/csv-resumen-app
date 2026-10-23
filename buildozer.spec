@@ -1,4 +1,5 @@
 [app]
+
 # (str) Título de tu aplicación
 title = CSV Resumen Outdoor Indoor
 
@@ -12,13 +13,12 @@ package.domain = org.benjamin
 source.include_exts = py,png,jpg,kv,atlas
 
 # (list) Aplicación principal a ejecutar
-source.dir =. 
+source.dir = .
 
 # (list) Archivo principal de Python
 source.main_file = main.py
 
 # (list) Requisitos de tu aplicación
-# Nota: 'jnius' solo funciona en Android, pero Buildozer lo maneja bien.
 requirements = python3,kivy,openpyxl,pyjnius
 
 # (bool) Indicate if you accept the Android SDK license
@@ -43,7 +43,7 @@ android.minapi = 21
 # Nivel de registro (0 = error, 1 = info, 2 = debug)
 log_level = 2
 
-# Modo de advertencia para root (1 = permitir compilar como root, útil en Google Colab)
+# Modo de advertencia para root (1 = permitir compilar como root)
 warn_on_root = 1
 
 # (list) Target architectures

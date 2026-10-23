@@ -47,7 +47,14 @@ jobs:
             openjdk-17-jdk \
             unzip \
             zlib1g-dev \
-            libltdl-dev
+            libltdl-dev \
+            android-sdk-build-tools
+
+      - name: Aceptar licencias de Android SDK
+        run: |
+          mkdir -p /root/.android
+          touch /root/.android/repositories.cfg
+          yes | sdkmanager --licenses || true
 
       - name: Instalar Cython y Buildozer
         run: |

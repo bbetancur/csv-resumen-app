@@ -21,6 +21,9 @@ source.main_file = main.py
 # Nota: 'jnius' solo funciona en Android, pero Buildozer lo maneja bien.
 requirements = python3,kivy,openpyxl,pyjnius
 
+# (bool) Indicate if you accept the Android SDK license
+android.accept_sdk_license = True
+
 # (str) Versión de la aplicación
 version = 1.0
 
@@ -42,9 +45,6 @@ log_level = 2
 
 # Modo de advertencia para root (1 = permitir compilar como root, útil en Google Colab)
 warn_on_root = 1
-
-# (bool) Indicate if you accept the Android SDK license
-android.accept_sdk_license = True
 
 # (list) Target architectures
 android.archs = arm64-v8a

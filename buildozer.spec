@@ -51,3 +51,9 @@ warn_on_root = 1
 
 # (list) Target architectures
 android.archs = arm64-v8a
+
+# (int) Android NDK version to use
+android.ndk = 25b
+
+android.api = 33
+android.minapi = 21

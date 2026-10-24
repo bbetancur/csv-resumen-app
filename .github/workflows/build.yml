@@ -56,6 +56,8 @@ jobs:
           pip install cython==0.29.36 buildozer
 
       - name: Compilar APK con Buildozer
+        env:
+          BUILDER_NDK_VERSION: "23b"
         run: buildozer -v android debug
 
       - name: Subir APK como artefacto

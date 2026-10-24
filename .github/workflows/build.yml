@@ -55,6 +55,9 @@ jobs:
           pip install --upgrade pip
           pip install cython==0.29.36 buildozer
 
+      - name: Limpiar compilación anterior de Buildozer
+        run: rm -rf .buildozer
+
       - name: Compilar APK con Buildozer
         env:
           BUILDER_NDK_VERSION: "23b"

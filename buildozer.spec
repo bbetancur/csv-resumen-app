@@ -53,7 +53,7 @@ warn_on_root = 1
 android.archs = arm64-v8a
 
 # (int) Android NDK version to use
-android.ndk = 25b
+android.ndk = 23b
 
 android.api = 33
 android.minapi = 21

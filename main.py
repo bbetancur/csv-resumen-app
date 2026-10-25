@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Resumen CSV Outdoor / Indoor. Compatible con PC (Tkinter) y Android (Modo Seguro / Download)."""
+"""Resumen CSV Outdoor / Indoor. Compatible con PC y Android."""
 import csv
 import os
 import re
@@ -8,22 +8,7 @@ import statistics
 from collections import defaultdict
 from kivy.utils import platform
 
-# Configuración de permisos y rutas para Android
-if platform == 'android':
-    from android.permissions import request_permissions, Permission
-    try:
-        request_permissions([Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE])
-    except Exception:
-        pass
-    
-    from jnius import autoclass
-    Environment = autoclass('android.os.Environment')
-    # Ruta de almacenamiento segura en Android (Carpeta Descargas / Download)
-    DEFAULT_ANDROID_FOLDER = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).getAbsolutePath()
-else:
-    DEFAULT_ANDROID_FOLDER = ''
-
-# Importar Tkinter de forma condicional (solo funciona en PC / Escritorio)
+# Importar Tkinter de forma condicional (solo PC)
 if platform != 'android':
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox
@@ -220,7 +205,7 @@ def process_indoor(folder, mode):
     return ['KPI'] + [label for _, label in columns], rows_out
 
 
-# Interfaz gráfica en PC (Tkinter) y ejecución automatizada en Android
+# Interfaz para PC usando Tkinter
 if platform != 'android':
     class App(tk.Tk):
         def __init__(self):
@@ -384,42 +369,56 @@ if platform != 'android':
             except Exception as exc:
                 messagebox.showerror('Error al exportar', str(exc))
 else:
+    # Lógica segura para Android ejecutada dentro del ciclo de vida
     class App:
         def __init__(self):
-            self.folder = DEFAULT_ANDROID_FOLDER
-            print(f"[Android] Usando carpeta segura Download: {self.folder}")
-            self.run_android_auto()
+            self.folder = ''
 
-        def run_android_auto(self):
-            if not self.folder or not os.path.exists(self.folder):
-                print("[Android] La carpeta Download no está disponible.")
-                return
+        def run_android_tasks(self):
             try:
-                print("[Android] Procesando archivos CSV en Download...")
-                headers, data = process_outdoor(self.folder)
-                out_txt = os.path.join(self.folder, 'RESUMEN_CSV.txt')
-                with open(out_txt, 'w', encoding='utf-8-sig', newline='') as f:
-                    lines = ['\t'.join(str(x) for x in headers)]
-                    for row in data:
-                        lines.append('\t'.join(str(v) if v is not None else '-' for v in row))
-                    f.write('\n'.join(lines).replace('\t', ';') + '\n')
-                print(f"[Android] Resumen TXT guardado en: {out_txt}")
-                
-                out_xlsx = os.path.join(self.folder, 'RESUMEN_CSV.xlsx')
-                from openpyxl import Workbook
-                wb = Workbook()
-                ws = wb.active
-                ws.title = 'Resumen'
-                ws.append(headers)
-                for row in data:
-                    ws.append([v if v is not None else '' for v in row])
-                wb.save(out_xlsx)
-                print(f"[Android] Resumen Excel guardado en: {out_xlsx}")
+                from android.permissions import request_permissions, Permission
+                request_permissions([Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE])
             except Exception as e:
-                print(f"[Android Error]: {e}")
+                print(f"[Android Permisos Error]: {e}")
+
+            try:
+                from jnius import autoclass
+                Environment = autoclass('android.os.Environment')
+                self.folder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).getAbsolutePath()
+                print(f"[Android] Carpeta Download: {self.folder}")
+            except Exception as e:
+                print(f"[Android Carpeta Error]: {e}")
+
+            if self.folder and os.path.exists(self.folder):
+                try:
+                    print("[Android] Procesando archivos CSV...")
+                    headers, data = process_outdoor(self.folder)
+                    out_txt = os.path.join(self.folder, 'RESUMEN_CSV.txt')
+                    with open(out_txt, 'w', encoding='utf-8-sig', newline='') as f:
+                        lines = ['\t'.join(str(x) for x in headers)]
+                        for row in data:
+                            lines.append('\t'.join(str(v) if v is not None else '-' for v in row))
+                        f.write('\n'.join(lines).replace('\t', ';') + '\n')
+                    print(f"[Android] TXT guardado en: {out_txt}")
+                    
+                    out_xlsx = os.path.join(self.folder, 'RESUMEN_CSV.xlsx')
+                    from openpyxl import Workbook
+                    wb = Workbook()
+                    ws = wb.active
+                    ws.title = 'Resumen'
+                    ws.append(headers)
+                    for row in data:
+                        ws.append([v if v is not None else '' for v in row])
+                    wb.save(out_xlsx)
+                    print(f"[Android] Excel guardado en: {out_xlsx}")
+                except Exception as e:
+                    print(f"[Android Proceso Error]: {e}")
+            else:
+                print("[Android] La carpeta Download no está accesible.")
 
         def mainloop(self):
-            pass
+            # Se ejecuta al iniciar la app de forma segura en Android
+            self.run_android_tasks()
 
 
 if __name__ == '__main__':

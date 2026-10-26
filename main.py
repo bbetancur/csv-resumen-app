@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Resumen CSV Outdoor / Indoor con Kivy y Explorador Robusto."""
+"""Resumen CSV Outdoor / Indoor con Kivy (Búsqueda inteligente y tipografía grande)."""
 import csv
 import os
 import re
@@ -8,7 +8,6 @@ import statistics
 from collections import defaultdict
 from kivy.app import App
 from kivy.utils import platform
-from kivy.clock import Clock
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
@@ -94,16 +93,21 @@ def device_label(rows, fallback):
             return row[1].strip()
     return fallback
 
-def csv_files(folder):
+def encontrar_archivos_csv_recursivo(folder):
+    """Busca archivos .csv o .CSV de manera recursiva en la carpeta y subcarpetas."""
+    csv_list = []
     if not folder or not os.path.exists(folder):
-        return []
-    return sorted((os.path.join(folder, f) for f in os.listdir(folder)
-                   if f.lower().endswith('.csv')), key=lambda p: os.path.basename(p).lower())
+        return csv_list
+    for root, dirs, files in os.walk(folder):
+        for f in files:
+            if f.lower().endswith('.csv'):
+                csv_list.append(os.path.join(root, f))
+    return sorted(csv_list, key=lambda p: os.path.basename(p).lower())
 
 def process_outdoor(folder):
-    files = csv_files(folder)
+    files = encontrar_archivos_csv_recursivo(folder)
     if not files:
-        raise ValueError('La carpeta seleccionada no contiene archivos CSV.')
+        raise ValueError('No se encontraron archivos CSV en la carpeta o subcarpetas.')
     headers = None
     avg_values = {name: defaultdict(list) for name in OUTDOOR_ROWS[:2]}
     sum_values = {name: defaultdict(float) for name in OUTDOOR_ROWS[2:]}
@@ -156,14 +160,14 @@ def process_outdoor(folder):
     return ['KPI'] + headers, result
 
 def process_indoor(folder, mode):
-    files = csv_files(folder)
+    files = encontrar_archivos_csv_recursivo(folder)
     matches = []
     for path in files:
         m = re.search(r'\.([1-5])\.csv$', os.path.basename(path), flags=re.I)
         if m:
             matches.append((int(m.group(1)), path))
     if not matches:
-        raise ValueError('No se encontraron archivos terminados en .1.csv al .5.csv en la carpeta.')
+        raise ValueError('No se encontraron archivos terminados en .1.csv al .5.csv (revisar subcarpetas).')
 
     labels_by_suffix = defaultdict(set)
     values_by_group = defaultdict(list)
@@ -218,23 +222,21 @@ class FolderChooserPopup(Popup):
 
         layout = BoxLayout(orientation='vertical', spacing=10, padding=10)
         
-        self.path_label = Label(text=self.current_path, font_size=18, size_hint_y=None, height=50)
+        self.path_label = Label(text=self.current_path, font_size=24, size_hint_y=None, height=70)
         layout.add_widget(self.path_label)
 
-        # Scrollview con carpetas
         self.scroll = ScrollView()
         self.grid = GridLayout(cols=1, spacing=5, size_hint_y=None)
         self.grid.bind(minimum_height=self.grid.setter('height'))
         self.scroll.add_widget(self.grid)
         layout.add_widget(self.scroll)
 
-        # Botones inferiores
-        btn_layout = BoxLayout(size_hint_y=None, height=60, spacing=10)
-        select_btn = Button(text="Elegir Esta Carpeta", font_size=18, background_color=(0.1, 0.7, 0.3, 1))
+        btn_layout = BoxLayout(size_hint_y=None, height=70, spacing=10)
+        select_btn = Button(text="Elegir Esta Carpeta", font_size=24, background_color=(0.1, 0.7, 0.3, 1))
         select_btn.bind(on_press=self.select_current)
         btn_layout.add_widget(select_btn)
 
-        cancel_btn = Button(text="Cancelar", font_size=18, background_color=(0.8, 0.2, 0.2, 1))
+        cancel_btn = Button(text="Cancelar", font_size=24, background_color=(0.8, 0.2, 0.2, 1))
         cancel_btn.bind(on_press=lambda x: self.dismiss())
         btn_layout.add_widget(cancel_btn)
         
@@ -244,11 +246,9 @@ class FolderChooserPopup(Popup):
 
     def load_directories(self):
         self.grid.clear_widgets()
-        
-        # Botón para subir de nivel
         parent_dir = os.path.dirname(self.current_path)
         if parent_dir and parent_dir != self.current_path:
-            btn_up = Button(text=".. [Subir de carpeta]", font_size=18, size_hint_y=None, height=50, background_color=(0.3, 0.3, 0.3, 1))
+            btn_up = Button(text=".. [Subir de carpeta]", font_size=24, size_hint_y=None, height=60, background_color=(0.3, 0.3, 0.3, 1))
             btn_up.bind(on_press=lambda x: self.change_dir(parent_dir))
             self.grid.add_widget(btn_up)
 
@@ -257,7 +257,7 @@ class FolderChooserPopup(Popup):
             for item in items:
                 full_path = os.path.join(self.current_path, item)
                 if os.path.isdir(full_path):
-                    btn = Button(text=f"> {item}", font_size=18, size_hint_y=None, height=50, background_color=(0.2, 0.4, 0.6, 1))
+                    btn = Button(text=f"> {item}", font_size=24, size_hint_y=None, height=60, background_color=(0.2, 0.4, 0.6, 1))
                     btn.bind(on_press=lambda x, p=full_path: self.change_dir(p))
                     self.grid.add_widget(btn)
         except Exception:
@@ -287,12 +287,12 @@ class ResumenAppUI(FloatLayout):
             pos_hint={'center_x': 0.5, 'center_y': 0.5}
         )
 
-        # 1. Título principal (font_size = 28)
+        # 1. Título principal (font_size = 36)
         self.title_label = Label(
             text='Resumen CSV Outdoor / Indoor', 
-            font_size=28, 
+            font_size=36, 
             size_hint_y=None, 
-            height=70, 
+            height=80, 
             bold=True,
             halign='center',
             valign='middle'
@@ -300,34 +300,34 @@ class ResumenAppUI(FloatLayout):
         self.title_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         main_layout.add_widget(self.title_label)
 
-        # 2. Selector de Modo (font_size = 28)
+        # 2. Selector de Modo (font_size = 36)
         self.mode_spinner = Spinner(
             text='Outdoor', 
             values=('Outdoor', 'Indoor Normal', 'Indoor Forzado'), 
             size_hint_y=None, 
-            height=75,
-            font_size=28
+            height=80,
+            font_size=36
         )
         main_layout.add_widget(self.mode_spinner)
 
-        # 3. Botón para seleccionar carpeta (font_size = 28)
+        # 3. Botón para seleccionar carpeta (font_size = 36)
         self.folder_btn = Button(
             text='Seleccionar Carpeta con CSVs', 
             size_hint_y=None, 
-            height=75, 
+            height=80, 
             background_color=(0.15, 0.5, 0.75, 1),
-            font_size=28,
+            font_size=36,
             bold=True
         )
         self.folder_btn.bind(on_press=self.abrir_explorador)
         main_layout.add_widget(self.folder_btn)
 
-        # 4. Etiqueta de ruta (font_size = 28)
+        # 4. Etiqueta de ruta (font_size = 36)
         self.path_label = Label(
             text=f'Carpeta:\n{self.selected_folder}', 
-            font_size=28, 
+            font_size=36, 
             size_hint_y=None, 
-            height=110, 
+            height=130, 
             halign='center', 
             valign='middle',
             bold=True
@@ -335,22 +335,22 @@ class ResumenAppUI(FloatLayout):
         self.path_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         main_layout.add_widget(self.path_label)
 
-        # 5. Botón Procesar (font_size = 28)
+        # 5. Botón Procesar (font_size = 36)
         self.process_btn = Button(
             text='Procesar y Guardar Resultados', 
             size_hint_y=None, 
-            height=85, 
+            height=90, 
             background_color=(0.1, 0.7, 0.3, 1),
-            font_size=28,
+            font_size=36,
             bold=True
         )
         self.process_btn.bind(on_press=self.ejecutar_proceso)
         main_layout.add_widget(self.process_btn)
 
-        # 6. Estado (font_size = 28)
+        # 6. Estado (font_size = 36)
         self.status_label = Label(
             text='Listo. Selecciona tu carpeta con archivos .csv y presiona procesar.', 
-            font_size=28, 
+            font_size=36, 
             halign='center', 
             valign='middle'
         )
@@ -359,12 +359,12 @@ class ResumenAppUI(FloatLayout):
 
         self.add_widget(main_layout)
 
-        # 7. Créditos en la esquina inferior derecha (font_size = 16)
+        # 7. Créditos en la esquina inferior derecha (font_size = 28)
         self.credits_label = Label(
             text='creado por Benjamín Betancur\nbenjamin.betancur@gmail.com',
-            font_size=16,
+            font_size=28,
             size_hint=(None, None),
-            size=(350, 60),
+            size=(550, 90),
             pos_hint={'right': 0.98, 'bottom': 0.02},
             halign='right',
             valign='bottom',
@@ -374,7 +374,6 @@ class ResumenAppUI(FloatLayout):
         self.add_widget(self.credits_label)
 
     def abrir_explorador(self, instance):
-        # Utiliza un explorador visual interno de carpetas totalmente compatible con Android y PC
         popup = FolderChooserPopup(self.selected_folder, self.on_folder_chosen)
         popup.open()
 

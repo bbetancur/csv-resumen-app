@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Resumen CSV Outdoor / Indoor con Kivy (Búsqueda inteligente y tipografía grande)."""
+"""Resumen CSV Outdoor / Indoor con Kivy (Explorador de Archivos y Permisos Android 11+)."""
 import csv
 import os
 import re
@@ -17,11 +17,15 @@ from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.gridlayout import GridLayout
 
-# Configuración de permisos y rutas en Android
+# Configuración avanzada de permisos para Android 11+ (Scoped Storage)
 if platform == 'android':
     from android.permissions import request_permissions, Permission
     try:
-        request_permissions([Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE])
+        request_permissions([
+            Permission.READ_EXTERNAL_STORAGE, 
+            Permission.WRITE_EXTERNAL_STORAGE,
+            "android.permission.MANAGE_EXTERNAL_STORAGE"
+        ])
     except Exception:
         pass
     from jnius import autoclass
@@ -93,21 +97,28 @@ def device_label(rows, fallback):
             return row[1].strip()
     return fallback
 
-def encontrar_archivos_csv_recursivo(folder):
-    """Busca archivos .csv o .CSV de manera recursiva en la carpeta y subcarpetas."""
+def obtener_archivos_csv(target_path):
+    """Obtiene lista de archivos .csv si target_path es carpeta o lista de archivos si se seleccionó individualmente."""
     csv_list = []
-    if not folder or not os.path.exists(folder):
+    if not target_path or not os.path.exists(target_path):
         return csv_list
-    for root, dirs, files in os.walk(folder):
+    
+    if os.path.isfile(target_path):
+        if target_path.lower().endswith('.csv'):
+            folder = os.path.dirname(target_path)
+            return obtener_archivos_csv(folder)
+        return []
+
+    for root, dirs, files in os.walk(target_path):
         for f in files:
             if f.lower().endswith('.csv'):
                 csv_list.append(os.path.join(root, f))
     return sorted(csv_list, key=lambda p: os.path.basename(p).lower())
 
 def process_outdoor(folder):
-    files = encontrar_archivos_csv_recursivo(folder)
+    files = obtener_archivos_csv(folder)
     if not files:
-        raise ValueError('No se encontraron archivos CSV en la carpeta o subcarpetas.')
+        raise ValueError('No se encontraron archivos CSV en la ubicación.')
     headers = None
     avg_values = {name: defaultdict(list) for name in OUTDOOR_ROWS[:2]}
     sum_values = {name: defaultdict(float) for name in OUTDOOR_ROWS[2:]}
@@ -160,14 +171,15 @@ def process_outdoor(folder):
     return ['KPI'] + headers, result
 
 def process_indoor(folder, mode):
-    files = encontrar_archivos_csv_recursivo(folder)
+    files = obtener_archivos_csv(folder)
     matches = []
     for path in files:
-        m = re.search(r'\.([1-5])\.csv$', os.path.basename(path), flags=re.I)
+        # Expresión regular mejorada para detectar patrones .1.csv, _1.csv, .1.CSV, etc.
+        m = re.search(r'[\._]([1-5])\.csv$', os.path.basename(path), flags=re.I)
         if m:
             matches.append((int(m.group(1)), path))
     if not matches:
-        raise ValueError('No se encontraron archivos terminados en .1.csv al .5.csv (revisar subcarpetas).')
+        raise ValueError('No se encontraron archivos terminados en .1.csv al .5.csv.')
 
     labels_by_suffix = defaultdict(set)
     values_by_group = defaultdict(list)
@@ -215,9 +227,11 @@ def process_indoor(folder, mode):
 class FolderChooserPopup(Popup):
     def __init__(self, current_path, callback, **kwargs):
         super().__init__(**kwargs)
-        self.title = "Seleccionar Carpeta"
-        self.size_hint = (0.9, 0.9)
+        self.title = "Seleccionar Carpeta o Archivo"
+        self.size_hint = (0.95, 0.95)
         self.current_path = current_path if os.path.exists(current_path) else '/storage/emulated/0/'
+        if os.path.isfile(self.current_path):
+            self.current_path = os.path.dirname(self.current_path)
         self.callback = callback
 
         layout = BoxLayout(orientation='vertical', spacing=10, padding=10)
@@ -231,12 +245,12 @@ class FolderChooserPopup(Popup):
         self.scroll.add_widget(self.grid)
         layout.add_widget(self.scroll)
 
-        btn_layout = BoxLayout(size_hint_y=None, height=70, spacing=10)
-        select_btn = Button(text="Elegir Esta Carpeta", font_size=24, background_color=(0.1, 0.7, 0.3, 1))
+        btn_layout = BoxLayout(size_hint_y=None, height=80, spacing=10)
+        select_btn = Button(text="Elegir Esta Carpeta", font_size=28, background_color=(0.1, 0.7, 0.3, 1))
         select_btn.bind(on_press=self.select_current)
         btn_layout.add_widget(select_btn)
 
-        cancel_btn = Button(text="Cancelar", font_size=24, background_color=(0.8, 0.2, 0.2, 1))
+        cancel_btn = Button(text="Cancelar", font_size=28, background_color=(0.8, 0.2, 0.2, 1))
         cancel_btn.bind(on_press=lambda x: self.dismiss())
         btn_layout.add_widget(cancel_btn)
         
@@ -248,7 +262,7 @@ class FolderChooserPopup(Popup):
         self.grid.clear_widgets()
         parent_dir = os.path.dirname(self.current_path)
         if parent_dir and parent_dir != self.current_path:
-            btn_up = Button(text=".. [Subir de carpeta]", font_size=24, size_hint_y=None, height=60, background_color=(0.3, 0.3, 0.3, 1))
+            btn_up = Button(text=".. [Subir de carpeta]", font_size=24, size_hint_y=None, height=65, background_color=(0.3, 0.3, 0.3, 1))
             btn_up.bind(on_press=lambda x: self.change_dir(parent_dir))
             self.grid.add_widget(btn_up)
 
@@ -257,11 +271,16 @@ class FolderChooserPopup(Popup):
             for item in items:
                 full_path = os.path.join(self.current_path, item)
                 if os.path.isdir(full_path):
-                    btn = Button(text=f"> {item}", font_size=24, size_hint_y=None, height=60, background_color=(0.2, 0.4, 0.6, 1))
+                    btn = Button(text=f"[Carpeta] > {item}", font_size=24, size_hint_y=None, height=65, background_color=(0.2, 0.4, 0.6, 1))
                     btn.bind(on_press=lambda x, p=full_path: self.change_dir(p))
                     self.grid.add_widget(btn)
-        except Exception:
-            pass
+                elif item.lower().endswith('.csv'):
+                    btn = Button(text=f"[Archivo CSV] {item}", font_size=24, size_hint_y=None, height=65, background_color=(0.1, 0.6, 0.4, 1))
+                    btn.bind(on_press=lambda x, p=self.current_path: self.select_specific(p))
+                    self.grid.add_widget(btn)
+        except Exception as e:
+            err_btn = Button(text=f"Error al leer carpeta: {e}", font_size=20, size_hint_y=None, height=65)
+            self.grid.add_widget(err_btn)
 
     def change_dir(self, path):
         if os.path.exists(path):
@@ -271,6 +290,10 @@ class FolderChooserPopup(Popup):
 
     def select_current(self, instance):
         self.callback(self.current_path)
+        self.dismiss()
+
+    def select_specific(self, path):
+        self.callback(path)
         self.dismiss()
 
 
@@ -380,25 +403,27 @@ class ResumenAppUI(FloatLayout):
     def on_folder_chosen(self, folder_path):
         self.selected_folder = folder_path
         self.path_label.text = f'Carpeta:\n{self.selected_folder}'
-        self.status_label.text = 'Carpeta seleccionada correctamente.'
+        self.status_label.text = 'Ubicación seleccionada correctamente.'
 
     def ejecutar_proceso(self, instance):
         folder = self.selected_folder
         mode_val = self.mode_spinner.text
         
         if not folder or not os.path.exists(folder):
-            self.status_label.text = 'Error: La carpeta seleccionada no es válida.'
+            self.status_label.text = 'Error: La ubicación seleccionada no es válida.'
             return
+
+        target_dir = folder if os.path.isdir(folder) else os.path.dirname(folder)
 
         try:
             if mode_val == 'Outdoor':
-                headers, data = process_outdoor(folder)
+                headers, data = process_outdoor(target_dir)
             else:
                 mode_tipo = 'Indoor Normal' if mode_val == 'Indoor Normal' else 'Indoor Forzado'
-                headers, data = process_indoor(folder, mode_tipo)
+                headers, data = process_indoor(target_dir, mode_tipo)
 
             # Guardar TXT
-            out_txt = os.path.join(folder, 'RESUMEN_CSV.txt')
+            out_txt = os.path.join(target_dir, 'RESUMEN_CSV.txt')
             with open(out_txt, 'w', encoding='utf-8-sig', newline='') as f:
                 lines = ['\t'.join(str(x) for x in headers)]
                 for row in data:
@@ -406,7 +431,7 @@ class ResumenAppUI(FloatLayout):
                 f.write('\n'.join(lines).replace('\t', ';') + '\n')
 
             # Guardar Excel
-            out_xlsx = os.path.join(folder, 'RESUMEN_CSV.xlsx')
+            out_xlsx = os.path.join(target_dir, 'RESUMEN_CSV.xlsx')
             from openpyxl import Workbook
             wb = Workbook()
             ws = wb.active
@@ -416,7 +441,7 @@ class ResumenAppUI(FloatLayout):
                 ws.append([v if v is not None else '' for v in row])
             wb.save(out_xlsx)
 
-            self.status_label.text = f'¡Éxito! Archivos guardados en:\n{folder}'
+            self.status_label.text = f'¡Éxito! Archivos guardados en:\n{target_dir}'
         except Exception as e:
             self.status_label.text = f'Aviso: {str(e)}'
 

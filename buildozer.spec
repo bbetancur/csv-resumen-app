@@ -31,7 +31,7 @@ android.accept_sdk_license = True
 version = 1.0
 
 # (list) Permisos requeridos
-android.permissions = INTERNET, READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE
+android.permissions = INTERNET, READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE, MANAGE_EXTERNAL_STORAGE
 
 # (str) Orientación soportada (portrait, landscape o all)
 orientation = portrait

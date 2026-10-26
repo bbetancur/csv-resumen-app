@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Resumen CSV Outdoor / Indoor con Kivy (Letra grande y créditos integrados)."""
+"""Resumen CSV Outdoor / Indoor con Kivy y Explorador Robusto."""
 import csv
 import os
 import re
@@ -8,13 +8,17 @@ import statistics
 from collections import defaultdict
 from kivy.app import App
 from kivy.utils import platform
+from kivy.clock import Clock
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.spinner import Spinner
+from kivy.uix.popup import Popup
+from kivy.uix.scrollview import ScrollView
+from kivy.uix.gridlayout import GridLayout
 
-# Configuración de permisos en Android
+# Configuración de permisos y rutas en Android
 if platform == 'android':
     from android.permissions import request_permissions, Permission
     try:
@@ -204,24 +208,89 @@ def process_indoor(folder, mode):
     return ['KPI'] + [label for _, label in columns], rows_out
 
 
+class FolderChooserPopup(Popup):
+    def __init__(self, current_path, callback, **kwargs):
+        super().__init__(**kwargs)
+        self.title = "Seleccionar Carpeta"
+        self.size_hint = (0.9, 0.9)
+        self.current_path = current_path if os.path.exists(current_path) else '/storage/emulated/0/'
+        self.callback = callback
+
+        layout = BoxLayout(orientation='vertical', spacing=10, padding=10)
+        
+        self.path_label = Label(text=self.current_path, font_size=18, size_hint_y=None, height=50)
+        layout.add_widget(self.path_label)
+
+        # Scrollview con carpetas
+        self.scroll = ScrollView()
+        self.grid = GridLayout(cols=1, spacing=5, size_hint_y=None)
+        self.grid.bind(minimum_height=self.grid.setter('height'))
+        self.scroll.add_widget(self.grid)
+        layout.add_widget(self.scroll)
+
+        # Botones inferiores
+        btn_layout = BoxLayout(size_hint_y=None, height=60, spacing=10)
+        select_btn = Button(text="Elegir Esta Carpeta", font_size=18, background_color=(0.1, 0.7, 0.3, 1))
+        select_btn.bind(on_press=self.select_current)
+        btn_layout.add_widget(select_btn)
+
+        cancel_btn = Button(text="Cancelar", font_size=18, background_color=(0.8, 0.2, 0.2, 1))
+        cancel_btn.bind(on_press=lambda x: self.dismiss())
+        btn_layout.add_widget(cancel_btn)
+        
+        layout.add_widget(btn_layout)
+        self.add_widget(layout)
+        self.load_directories()
+
+    def load_directories(self):
+        self.grid.clear_widgets()
+        
+        # Botón para subir de nivel
+        parent_dir = os.path.dirname(self.current_path)
+        if parent_dir and parent_dir != self.current_path:
+            btn_up = Button(text=".. [Subir de carpeta]", font_size=18, size_hint_y=None, height=50, background_color=(0.3, 0.3, 0.3, 1))
+            btn_up.bind(on_press=lambda x: self.change_dir(parent_dir))
+            self.grid.add_widget(btn_up)
+
+        try:
+            items = sorted(os.listdir(self.current_path))
+            for item in items:
+                full_path = os.path.join(self.current_path, item)
+                if os.path.isdir(full_path):
+                    btn = Button(text=f"> {item}", font_size=18, size_hint_y=None, height=50, background_color=(0.2, 0.4, 0.6, 1))
+                    btn.bind(on_press=lambda x, p=full_path: self.change_dir(p))
+                    self.grid.add_widget(btn)
+        except Exception:
+            pass
+
+    def change_dir(self, path):
+        if os.path.exists(path):
+            self.current_path = path
+            self.path_label.text = path
+            self.load_directories()
+
+    def select_current(self, instance):
+        self.callback(self.current_path)
+        self.dismiss()
+
+
 class ResumenAppUI(FloatLayout):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.selected_folder = DEFAULT_FOLDER
 
-        # Contenedor principal centrado con diseño vertical (Espaciado y tamaños grandes)
         main_layout = BoxLayout(
             orientation='vertical',
-            padding=35,
-            spacing=20,
+            padding=25,
+            spacing=15,
             size_hint=(0.95, 0.9),
             pos_hint={'center_x': 0.5, 'center_y': 0.5}
         )
 
-        # 1. Título principal (Recuadro superior grande)
+        # 1. Título principal (font_size = 28)
         self.title_label = Label(
             text='Resumen CSV Outdoor / Indoor', 
-            font_size=22, 
+            font_size=28, 
             size_hint_y=None, 
             height=70, 
             bold=True,
@@ -231,34 +300,34 @@ class ResumenAppUI(FloatLayout):
         self.title_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         main_layout.add_widget(self.title_label)
 
-        # 2. Selector de Modo con letra grande
+        # 2. Selector de Modo (font_size = 28)
         self.mode_spinner = Spinner(
             text='Outdoor', 
             values=('Outdoor', 'Indoor Normal', 'Indoor Forzado'), 
             size_hint_y=None, 
-            height=65,
-            font_size=18
+            height=75,
+            font_size=28
         )
         main_layout.add_widget(self.mode_spinner)
 
-        # 3. Botón de selección de carpeta con letra grande
+        # 3. Botón para seleccionar carpeta (font_size = 28)
         self.folder_btn = Button(
             text='Seleccionar Carpeta con CSVs', 
             size_hint_y=None, 
-            height=70, 
+            height=75, 
             background_color=(0.15, 0.5, 0.75, 1),
-            font_size=18,
+            font_size=28,
             bold=True
         )
-        self.folder_btn.bind(on_press=self.seleccionar_carpeta)
+        self.folder_btn.bind(on_press=self.abrir_explorador)
         main_layout.add_widget(self.folder_btn)
 
-        # 4. Etiqueta de ruta (Recuadro central mediano)
+        # 4. Etiqueta de ruta (font_size = 28)
         self.path_label = Label(
             text=f'Carpeta:\n{self.selected_folder}', 
-            font_size=14, 
+            font_size=28, 
             size_hint_y=None, 
-            height=90, 
+            height=110, 
             halign='center', 
             valign='middle',
             bold=True
@@ -266,57 +335,53 @@ class ResumenAppUI(FloatLayout):
         self.path_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         main_layout.add_widget(self.path_label)
 
-        # 5. Botón Procesar grande y llamativo
+        # 5. Botón Procesar (font_size = 28)
         self.process_btn = Button(
             text='Procesar y Guardar Resultados', 
             size_hint_y=None, 
-            height=75, 
+            height=85, 
             background_color=(0.1, 0.7, 0.3, 1),
-            font_size=20,
+            font_size=28,
             bold=True
         )
         self.process_btn.bind(on_press=self.ejecutar_proceso)
         main_layout.add_widget(self.process_btn)
 
-        # 6. Etiqueta de estado inferior (Recuadro inferior grande)
+        # 6. Estado (font_size = 28)
         self.status_label = Label(
             text='Listo. Selecciona tu carpeta con archivos .csv y presiona procesar.', 
-            font_size=16, 
+            font_size=28, 
             halign='center', 
             valign='middle'
         )
         self.status_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         main_layout.add_widget(self.status_label)
 
-        # Añadir layout principal a la pantalla
         self.add_widget(main_layout)
 
-        # 7. MENSAJE FLOTANTE EN LA ESQUINA INFERIOR DERECHA (Créditos)
+        # 7. Créditos en la esquina inferior derecha (font_size = 16)
         self.credits_label = Label(
             text='creado por Benjamín Betancur\nbenjamin.betancur@gmail.com',
-            font_size=11,
+            font_size=16,
             size_hint=(None, None),
-            size=(250, 40),
+            size=(350, 60),
             pos_hint={'right': 0.98, 'bottom': 0.02},
             halign='right',
             valign='bottom',
-            color=(0.7, 0.7, 0.7, 1) # Tono gris sutil y elegante
+            color=(0.7, 0.7, 0.7, 1)
         )
         self.credits_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         self.add_widget(self.credits_label)
 
-    def seleccionar_carpeta(self, instance):
-        try:
-            from plyer import filechooser
-            filechooser.choose_dir(on_selection=self.handle_folder_selection)
-        except Exception as e:
-            self.status_label.text = f'Aviso selector: {e}'
+    def abrir_explorador(self, instance):
+        # Utiliza un explorador visual interno de carpetas totalmente compatible con Android y PC
+        popup = FolderChooserPopup(self.selected_folder, self.on_folder_chosen)
+        popup.open()
 
-    def handle_folder_selection(self, selection):
-        if selection and len(selection) > 0:
-            self.selected_folder = selection[0]
-            self.path_label.text = f'Carpeta:\n{self.selected_folder}'
-            self.status_label.text = 'Carpeta seleccionada correctamente.'
+    def on_folder_chosen(self, folder_path):
+        self.selected_folder = folder_path
+        self.path_label.text = f'Carpeta:\n{self.selected_folder}'
+        self.status_label.text = 'Carpeta seleccionada correctamente.'
 
     def ejecutar_proceso(self, instance):
         folder = self.selected_folder

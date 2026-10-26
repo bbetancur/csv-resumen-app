@@ -1,22 +1,30 @@
 # -*- coding: utf-8 -*-
-"""Resumen CSV Outdoor / Indoor. Compatible con PC y Android."""
+"""Resumen CSV Outdoor / Indoor con Kivy y Selector de Archivos (PC y Android)."""
 import csv
 import os
 import re
 import math
 import statistics
 from collections import defaultdict
+from kivy.app import App
 from kivy.utils import platform
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.button import Button
+from kivy.uix.label import Label
+from kivy.uix.spinner import Spinner
 
-# Importar Tkinter de forma condicional (solo PC)
-if platform != 'android':
-    import tkinter as tk
-    from tkinter import ttk, filedialog, messagebox
+# Configuración de permisos en Android
+if platform == 'android':
+    from android.permissions import request_permissions, Permission
+    try:
+        request_permissions([Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE])
+    except Exception:
+        pass
+    from jnius import autoclass
+    Environment = autoclass('android.os.Environment')
+    DEFAULT_FOLDER = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).getAbsolutePath()
 else:
-    tk = None
-    ttk = None
-    filedialog = None
-    messagebox = None
+    DEFAULT_FOLDER = os.getcwd()
 
 OUTDOOR_ROWS = [
     'Application throughput downlink measurement average',
@@ -32,13 +40,10 @@ INDOOR_ROWS = [
     'Voice call dropped',
 ]
 
-
 def norm(s):
     return (s or '').strip().casefold()
 
-
 def parse_number(value):
-    """Convierte números con decimal punto o coma; ignora NC y celdas vacías."""
     s = (value or '').strip().replace('\u00a0', '').replace(' ', '')
     if not s or s.casefold() in {'nc', 'n/a', 'na', '-', 'null'}:
         return None
@@ -55,14 +60,12 @@ def parse_number(value):
     except ValueError:
         return None
 
-
 def fmt(value):
     if value is None:
         return '-'
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     return ('%.6f' % value).rstrip('0').rstrip('.').replace('.', ',')
-
 
 def read_csv(path):
     for enc in ('utf-8-sig', 'latin-1'):
@@ -73,7 +76,6 @@ def read_csv(path):
             continue
     return []
 
-
 def row_value(rows, name, value_col=1):
     target = norm(name)
     for row in rows:
@@ -81,13 +83,11 @@ def row_value(rows, name, value_col=1):
             return parse_number(row[value_col])
     return None
 
-
 def device_label(rows, fallback):
     for row in rows:
         if len(row) > 1 and norm(row[0]) == 'device label' and row[1].strip():
             return row[1].strip()
     return fallback
-
 
 def csv_files(folder):
     if not folder or not os.path.exists(folder):
@@ -95,11 +95,10 @@ def csv_files(folder):
     return sorted((os.path.join(folder, f) for f in os.listdir(folder)
                    if f.lower().endswith('.csv')), key=lambda p: os.path.basename(p).lower())
 
-
 def process_outdoor(folder):
     files = csv_files(folder)
     if not files:
-        raise ValueError('La carpeta no contiene archivos CSV.')
+        raise ValueError('La carpeta seleccionada no contiene archivos CSV.')
     headers = None
     avg_values = {name: defaultdict(list) for name in OUTDOOR_ROWS[:2]}
     sum_values = {name: defaultdict(float) for name in OUTDOOR_ROWS[2:]}
@@ -151,7 +150,6 @@ def process_outdoor(folder):
         result.append([name] + vals)
     return ['KPI'] + headers, result
 
-
 def process_indoor(folder, mode):
     files = csv_files(folder)
     matches = []
@@ -160,7 +158,7 @@ def process_indoor(folder, mode):
         if m:
             matches.append((int(m.group(1)), path))
     if not matches:
-        raise ValueError('No se encontraron archivos terminados en .1.csv, .2.csv, .3.csv, .4.csv o .5.csv.')
+        raise ValueError('No se encontraron archivos terminados en .1.csv al .5.csv en la carpeta.')
 
     labels_by_suffix = defaultdict(set)
     values_by_group = defaultdict(list)
@@ -205,221 +203,100 @@ def process_indoor(folder, mode):
     return ['KPI'] + [label for _, label in columns], rows_out
 
 
-# Interfaz para PC usando Tkinter
-if platform != 'android':
-    class App(tk.Tk):
-        def __init__(self):
-            super().__init__()
-            self.title('Resumen CSV - Outdoor / Indoor')
-            self.geometry('900x510')
-            self.minsize(680, 390)
-            self.folder = ''
-            self.headers = []
-            self.data = []
-            self.mode = tk.StringVar(value='Outdoor')
-            self.indoor_mode = tk.StringVar(value='Indoor Normal')
-            self._build_ui()
+class ResumenAppUI(BoxLayout):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.orientation = 'vertical'
+        self.padding = 25
+        self.spacing = 15
+        self.selected_folder = DEFAULT_FOLDER
 
-        def _build_ui(self):
-            top = ttk.Frame(self, padding=10)
-            top.pack(fill='x')
-            ttk.Label(top, text='Tipo de análisis:').pack(side='left')
-            ttk.Radiobutton(top, text='Outdoor', variable=self.mode, value='Outdoor', command=self._mode_changed).pack(side='left', padx=(8, 4))
-            ttk.Radiobutton(top, text='Indoor', variable=self.mode, value='Indoor', command=self._mode_changed).pack(side='left', padx=4)
-            self.indoor_frame = ttk.Frame(top)
-            self.indoor_frame.pack(side='left', padx=12)
-            ttk.Radiobutton(self.indoor_frame, text='Indoor Normal', variable=self.indoor_mode, value='Indoor Normal').pack(side='left')
-            ttk.Radiobutton(self.indoor_frame, text='Indoor Forzado', variable=self.indoor_mode, value='Indoor Forzado').pack(side='left', padx=(8, 0))
-            ttk.Button(top, text='Seleccionar carpeta…', command=self.choose_folder).pack(side='right')
-            self.folder_label = ttk.Label(self, text='Carpeta: no seleccionada', padding=(10, 0, 10, 8))
-            self.folder_label.pack(fill='x')
-            actions = ttk.Frame(self, padding=(10, 0, 10, 8))
-            actions.pack(fill='x')
-            ttk.Button(actions, text='Procesar', command=self.run).pack(side='left')
-            ttk.Button(actions, text='Copiar tabla', command=self.copy_table).pack(side='left', padx=6)
-            ttk.Button(actions, text='Exportar Excel', command=self.export_excel).pack(side='left')
-            ttk.Button(actions, text='Guardar TXT', command=self.save_txt).pack(side='left', padx=6)
-            ttk.Button(actions, text='Información', command=lambda: messagebox.showinfo('Información', 'Creado por Benjamín Betancur')).pack(side='right')
-            table_frame = ttk.Frame(self, padding=(10, 0, 10, 10))
-            table_frame.pack(fill='both', expand=True)
-            self.tree = ttk.Treeview(table_frame, show='headings')
-            yscroll = ttk.Scrollbar(table_frame, orient='vertical', command=self.tree.yview)
-            xscroll = ttk.Scrollbar(table_frame, orient='horizontal', command=self.tree.xview)
-            self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
-            self.tree.grid(row=0, column=0, sticky='nsew')
-            yscroll.grid(row=0, column=1, sticky='ns')
-            xscroll.grid(row=1, column=0, sticky='ew')
-            table_frame.rowconfigure(0, weight=1)
-            table_frame.columnconfigure(0, weight=1)
-            self.status = ttk.Label(self, text='Selecciona una carpeta y presiona Procesar.', padding=(10, 0, 10, 8))
-            self.status.pack(fill='x')
-            self._mode_changed()
+        # Título
+        self.add_widget(Label(text='Resumen CSV Outdoor / Indoor', font_size=18, size_hint_y=None, height=40, bold=True))
 
-        def _mode_changed(self):
-            state = 'normal' if self.mode.get() == 'Indoor' else 'disabled'
-            for child in self.indoor_frame.winfo_children():
-                child.configure(state=state)
+        # Selector de Modo
+        self.mode_spinner = Spinner(text='Outdoor', values=('Outdoor', 'Indoor Normal', 'Indoor Forzado'), size_hint_y=None, height=50)
+        self.add_widget(self.mode_spinner)
 
-        def choose_folder(self):
-            folder = filedialog.askdirectory(title='Seleccionar carpeta con archivos CSV')
-            if folder:
-                self.folder = folder
-                self.folder_label.configure(text='Carpeta: ' + folder)
+        # Botón para buscar carpeta manualmente
+        self.folder_btn = Button(text='Seleccionar Carpeta con CSVs', size_hint_y=None, height=55, background_color=(0.2, 0.6, 0.8, 1))
+        self.folder_btn.bind(on_press=self.seleccionar_carpeta)
+        self.add_widget(self.folder_btn)
 
-        def run(self):
-            if not self.folder:
-                messagebox.showwarning('Falta carpeta', 'Primero selecciona una carpeta con archivos CSV.')
-                return
-            try:
-                if self.mode.get() == 'Outdoor':
-                    self.headers, self.data = process_outdoor(self.folder)
-                else:
-                    self.headers, self.data = process_indoor(self.folder, self.indoor_mode.get())
-                self._show_table()
-                self.status.configure(text=f'Resumen generado: {len(self.data)} filas de KPI.')
-                self._write_txt(os.path.join(self.folder, 'RESUMEN_CSV.txt'))
-            except Exception as exc:
-                messagebox.showerror('Error al procesar', str(exc))
+        # Etiqueta de Ruta Actual
+        self.path_label = Label(text=f'Carpeta:\n{self.selected_folder}', font_size=11, size_hint_y=None, height=70, halign='center', valign='middle')
+        self.path_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
+        self.add_widget(self.path_label)
 
-        def _format_value(self, value, row_name=None):
-            if (self.mode.get() == 'Outdoor' and row_name in OUTDOOR_ROWS[:2]
-                    and isinstance(value, (int, float)) and value is not None):
-                return f'{value:.2f}'.replace('.', ',')
-            return fmt(value) if isinstance(value, (int, float)) or value is None else str(value)
+        # Botón Procesar
+        self.process_btn = Button(text='Procesar y Guardar Resultados', size_hint_y=None, height=60, background_color=(0.1, 0.7, 0.3, 1))
+        self.process_btn.bind(on_press=self.ejecutar_proceso)
+        self.add_widget(self.process_btn)
 
-        def _show_table(self):
-            self.tree.delete(*self.tree.get_children())
-            cols = [f'c{i}' for i in range(len(self.headers))]
-            self.tree['columns'] = cols
-            for i, (col, heading) in enumerate(zip(cols, self.headers)):
-                self.tree.heading(col, text=heading)
-                self.tree.column(col, width=260 if i == 0 else 150, minwidth=100, stretch=True, anchor='w' if i == 0 else 'center')
-            for row in self.data:
-                row_name = row[0] if row else None
-                self.tree.insert('', 'end', values=[self._format_value(v, row_name) for v in row])
+        # Estado / Mensajes
+        self.status_label = Label(text='Listo. Selecciona tu carpeta con archivos .csv\ny presiona procesar.', font_size=13, halign='center', valign='middle')
+        self.status_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
+        self.add_widget(self.status_label)
 
-        def _tsv(self):
-            lines = ['\t'.join(str(x) for x in self.headers)]
-            for row in self.data:
-                row_name = row[0] if row else None
-                lines.append('\t'.join(self._format_value(v, row_name) for v in row))
-            return '\n'.join(lines)
+    def seleccionar_carpeta(self, instance):
+        try:
+            from plyer import filechooser
+            # Selector nativo utilizando plyer
+            filechooser.choose_dir(on_selection=self.handle_folder_selection)
+        except Exception as e:
+            # Plan B si plyer falla en alguna versión de Android
+            self.status_label.text = f'No se pudo abrir el selector: {e}\nUsando carpeta por defecto.'
 
-        def copy_table(self):
-            if not self.data:
-                messagebox.showinfo('Sin datos', 'Primero procesa una carpeta.')
-                return
-            self.clipboard_clear()
-            self.clipboard_append(self._tsv())
-            self.update()
-            self.status.configure(text='Tabla copiada. Puedes pegarla en Excel.')
+    def handle_folder_selection(self, selection):
+        if selection and len(selection) > 0:
+            self.selected_folder = selection[0]
+            self.path_label.text = f'Carpeta:\n{self.selected_folder}'
+            self.status_label.text = 'Carpeta seleccionada correctamente.'
 
-        def _write_txt(self, path):
-            with open(path, 'w', encoding='utf-8-sig', newline='') as f:
-                f.write(self._tsv().replace('\t', ';') + '\n')
+    def ejecutar_proceso(self, instance):
+        folder = self.selected_folder
+        mode_val = self.mode_spinner.text
+        
+        if not folder or not os.path.exists(folder):
+            self.status_label.text = 'Error: La carpeta seleccionada no es válida.'
+            return
 
-        def save_txt(self):
-            if not self.data:
-                messagebox.showinfo('Sin datos', 'Primero procesa una carpeta.')
-                return
-            path = filedialog.asksaveasfilename(title='Guardar resumen TXT', defaultextension='.txt', initialfile='RESUMEN_CSV.txt', filetypes=[('Archivo de texto', '*.txt')])
-            if path:
-                try:
-                    self._write_txt(path)
-                    messagebox.showinfo('Guardado', f'Resumen guardado en:\n{path}')
-                except Exception as exc:
-                    messagebox.showerror('Error', str(exc))
-
-        def export_excel(self):
-            if not self.data:
-                messagebox.showinfo('Sin datos', 'Primero procesa una carpeta.')
-                return
-            path = filedialog.asksaveasfilename(title='Exportar resumen a Excel', defaultextension='.xlsx', initialfile='RESUMEN_CSV.xlsx', filetypes=[('Excel', '*.xlsx')])
-            if not path:
-                return
-            try:
-                from openpyxl import Workbook
-                from openpyxl.styles import Font, PatternFill, Alignment
-                wb = Workbook()
-                ws = wb.active
-                ws.title = 'Resumen'
-                ws.append(self.headers)
-                for row in self.data:
-                    ws.append([v if v is not None else '' for v in row])
-                if self.mode.get() == 'Outdoor':
-                    for excel_row, data_row in enumerate(self.data, start=2):
-                        if data_row and data_row[0] in OUTDOOR_ROWS[:2]:
-                            for excel_col in range(2, len(self.headers) + 1):
-                                cell = ws.cell(row=excel_row, column=excel_col)
-                                if isinstance(cell.value, (int, float)):
-                                    cell.number_format = '0.00'
-                for cell in ws[1]:
-                    cell.font = Font(bold=True, color='FFFFFF')
-                    cell.fill = PatternFill('solid', fgColor='365F91')
-                    cell.alignment = Alignment(horizontal='center')
-                ws.freeze_panes = 'B2'
-                ws.auto_filter.ref = ws.dimensions
-                for col in ws.columns:
-                    letter = col[0].column_letter
-                    ws.column_dimensions[letter].width = min(max(max(len(str(c.value or '')) for c in col) + 2, 14), 42)
-                wb.save(path)
-                messagebox.showinfo('Exportación completada', f'Excel guardado en:\n{path}')
-            except ImportError:
-                messagebox.showerror('Falta una librería', 'Para exportar Excel instala openpyxl con:\npython -m pip install openpyxl')
-            except Exception as exc:
-                messagebox.showerror('Error al exportar', str(exc))
-else:
-    # Lógica segura para Android ejecutada dentro del ciclo de vida
-    class App:
-        def __init__(self):
-            self.folder = ''
-
-        def run_android_tasks(self):
-            try:
-                from android.permissions import request_permissions, Permission
-                request_permissions([Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE])
-            except Exception as e:
-                print(f"[Android Permisos Error]: {e}")
-
-            try:
-                from jnius import autoclass
-                Environment = autoclass('android.os.Environment')
-                self.folder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).getAbsolutePath()
-                print(f"[Android] Carpeta Download: {self.folder}")
-            except Exception as e:
-                print(f"[Android Carpeta Error]: {e}")
-
-            if self.folder and os.path.exists(self.folder):
-                try:
-                    print("[Android] Procesando archivos CSV...")
-                    headers, data = process_outdoor(self.folder)
-                    out_txt = os.path.join(self.folder, 'RESUMEN_CSV.txt')
-                    with open(out_txt, 'w', encoding='utf-8-sig', newline='') as f:
-                        lines = ['\t'.join(str(x) for x in headers)]
-                        for row in data:
-                            lines.append('\t'.join(str(v) if v is not None else '-' for v in row))
-                        f.write('\n'.join(lines).replace('\t', ';') + '\n')
-                    print(f"[Android] TXT guardado en: {out_txt}")
-                    
-                    out_xlsx = os.path.join(self.folder, 'RESUMEN_CSV.xlsx')
-                    from openpyxl import Workbook
-                    wb = Workbook()
-                    ws = wb.active
-                    ws.title = 'Resumen'
-                    ws.append(headers)
-                    for row in data:
-                        ws.append([v if v is not None else '' for v in row])
-                    wb.save(out_xlsx)
-                    print(f"[Android] Excel guardado en: {out_xlsx}")
-                except Exception as e:
-                    print(f"[Android Proceso Error]: {e}")
+        try:
+            if mode_val == 'Outdoor':
+                headers, data = process_outdoor(folder)
             else:
-                print("[Android] La carpeta Download no está accesible.")
+                mode_tipo = 'Indoor Normal' if mode_val == 'Indoor Normal' else 'Indoor Forzado'
+                headers, data = process_indoor(folder, mode_tipo)
 
-        def mainloop(self):
-            # Se ejecuta al iniciar la app de forma segura en Android
-            self.run_android_tasks()
+            # Guardar TXT
+            out_txt = os.path.join(folder, 'RESUMEN_CSV.txt')
+            with open(out_txt, 'w', encoding='utf-8-sig', newline='') as f:
+                lines = ['\t'.join(str(x) for x in headers)]
+                for row in data:
+                    lines.append('\t'.join(str(v) if v is not None else '-' for v in row))
+                f.write('\n'.join(lines).replace('\t', ';') + '\n')
+
+            # Guardar Excel
+            out_xlsx = os.path.join(folder, 'RESUMEN_CSV.xlsx')
+            from openpyxl import Workbook
+            wb = Workbook()
+            ws = wb.active
+            ws.title = 'Resumen'
+            ws.append(headers)
+            for row in data:
+                ws.append([v if v is not None else '' for v in row])
+            wb.save(out_xlsx)
+
+            self.status_label.text = f'¡Éxito! Archivos guardados en:\n{folder}'
+        except Exception as e:
+            # Controla cualquier error de archivos faltantes sin cerrar la app
+            self.status_label.text = f'Aviso: {str(e)}'
+
+
+class ResumenApp(App):
+    def build(self):
+        return ResumenAppUI()
 
 
 if __name__ == '__main__':
-    App().mainloop()
+    ResumenApp().run()

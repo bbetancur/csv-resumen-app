@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Resumen CSV Outdoor / Indoor con Kivy y Selector de Archivos (PC y Android)."""
+"""Resumen CSV Outdoor / Indoor con Kivy (Letra grande y créditos integrados)."""
 import csv
 import os
 import re
@@ -8,6 +8,7 @@ import statistics
 from collections import defaultdict
 from kivy.app import App
 from kivy.utils import platform
+from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
@@ -203,49 +204,113 @@ def process_indoor(folder, mode):
     return ['KPI'] + [label for _, label in columns], rows_out
 
 
-class ResumenAppUI(BoxLayout):
+class ResumenAppUI(FloatLayout):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.orientation = 'vertical'
-        self.padding = 25
-        self.spacing = 15
         self.selected_folder = DEFAULT_FOLDER
 
-        # Título
-        self.add_widget(Label(text='Resumen CSV Outdoor / Indoor', font_size=18, size_hint_y=None, height=40, bold=True))
+        # Contenedor principal centrado con diseño vertical (Espaciado y tamaños grandes)
+        main_layout = BoxLayout(
+            orientation='vertical',
+            padding=35,
+            spacing=20,
+            size_hint=(0.95, 0.9),
+            pos_hint={'center_x': 0.5, 'center_y': 0.5}
+        )
 
-        # Selector de Modo
-        self.mode_spinner = Spinner(text='Outdoor', values=('Outdoor', 'Indoor Normal', 'Indoor Forzado'), size_hint_y=None, height=50)
-        self.add_widget(self.mode_spinner)
+        # 1. Título principal (Recuadro superior grande)
+        self.title_label = Label(
+            text='Resumen CSV Outdoor / Indoor', 
+            font_size=22, 
+            size_hint_y=None, 
+            height=70, 
+            bold=True,
+            halign='center',
+            valign='middle'
+        )
+        self.title_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
+        main_layout.add_widget(self.title_label)
 
-        # Botón para buscar carpeta manualmente
-        self.folder_btn = Button(text='Seleccionar Carpeta con CSVs', size_hint_y=None, height=55, background_color=(0.2, 0.6, 0.8, 1))
+        # 2. Selector de Modo con letra grande
+        self.mode_spinner = Spinner(
+            text='Outdoor', 
+            values=('Outdoor', 'Indoor Normal', 'Indoor Forzado'), 
+            size_hint_y=None, 
+            height=65,
+            font_size=18
+        )
+        main_layout.add_widget(self.mode_spinner)
+
+        # 3. Botón de selección de carpeta con letra grande
+        self.folder_btn = Button(
+            text='Seleccionar Carpeta con CSVs', 
+            size_hint_y=None, 
+            height=70, 
+            background_color=(0.15, 0.5, 0.75, 1),
+            font_size=18,
+            bold=True
+        )
         self.folder_btn.bind(on_press=self.seleccionar_carpeta)
-        self.add_widget(self.folder_btn)
+        main_layout.add_widget(self.folder_btn)
 
-        # Etiqueta de Ruta Actual
-        self.path_label = Label(text=f'Carpeta:\n{self.selected_folder}', font_size=11, size_hint_y=None, height=70, halign='center', valign='middle')
+        # 4. Etiqueta de ruta (Recuadro central mediano)
+        self.path_label = Label(
+            text=f'Carpeta:\n{self.selected_folder}', 
+            font_size=14, 
+            size_hint_y=None, 
+            height=90, 
+            halign='center', 
+            valign='middle',
+            bold=True
+        )
         self.path_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
-        self.add_widget(self.path_label)
+        main_layout.add_widget(self.path_label)
 
-        # Botón Procesar
-        self.process_btn = Button(text='Procesar y Guardar Resultados', size_hint_y=None, height=60, background_color=(0.1, 0.7, 0.3, 1))
+        # 5. Botón Procesar grande y llamativo
+        self.process_btn = Button(
+            text='Procesar y Guardar Resultados', 
+            size_hint_y=None, 
+            height=75, 
+            background_color=(0.1, 0.7, 0.3, 1),
+            font_size=20,
+            bold=True
+        )
         self.process_btn.bind(on_press=self.ejecutar_proceso)
-        self.add_widget(self.process_btn)
+        main_layout.add_widget(self.process_btn)
 
-        # Estado / Mensajes
-        self.status_label = Label(text='Listo. Selecciona tu carpeta con archivos .csv\ny presiona procesar.', font_size=13, halign='center', valign='middle')
+        # 6. Etiqueta de estado inferior (Recuadro inferior grande)
+        self.status_label = Label(
+            text='Listo. Selecciona tu carpeta con archivos .csv y presiona procesar.', 
+            font_size=16, 
+            halign='center', 
+            valign='middle'
+        )
         self.status_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
-        self.add_widget(self.status_label)
+        main_layout.add_widget(self.status_label)
+
+        # Añadir layout principal a la pantalla
+        self.add_widget(main_layout)
+
+        # 7. MENSAJE FLOTANTE EN LA ESQUINA INFERIOR DERECHA (Créditos)
+        self.credits_label = Label(
+            text='creado por Benjamín Betancur\nbenjamin.betancur@gmail.com',
+            font_size=11,
+            size_hint=(None, None),
+            size=(250, 40),
+            pos_hint={'right': 0.98, 'bottom': 0.02},
+            halign='right',
+            valign='bottom',
+            color=(0.7, 0.7, 0.7, 1) # Tono gris sutil y elegante
+        )
+        self.credits_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
+        self.add_widget(self.credits_label)
 
     def seleccionar_carpeta(self, instance):
         try:
             from plyer import filechooser
-            # Selector nativo utilizando plyer
             filechooser.choose_dir(on_selection=self.handle_folder_selection)
         except Exception as e:
-            # Plan B si plyer falla en alguna versión de Android
-            self.status_label.text = f'No se pudo abrir el selector: {e}\nUsando carpeta por defecto.'
+            self.status_label.text = f'Aviso selector: {e}'
 
     def handle_folder_selection(self, selection):
         if selection and len(selection) > 0:
@@ -289,7 +354,6 @@ class ResumenAppUI(BoxLayout):
 
             self.status_label.text = f'¡Éxito! Archivos guardados en:\n{folder}'
         except Exception as e:
-            # Controla cualquier error de archivos faltantes sin cerrar la app
             self.status_label.text = f'Aviso: {str(e)}'
 
 

@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Resumen CSV Outdoor / Indoor con Kivy
-Copia de URIs vía Android ContentResolver + Tabla Visual en Pantalla.
-"""
+"""Resumen CSV Outdoor / Indoor con Kivy (Plyer seguro y tabla visual interactiva)."""
 import csv
 import os
 import re
 import math
 import statistics
+import shutil
 from collections import defaultdict
 
 from kivy.app import App
@@ -18,6 +17,7 @@ from kivy.uix.label import Label
 from kivy.uix.spinner import Spinner
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.gridlayout import GridLayout
+from plyer import filechooser
 
 if platform == 'android':
     from android.permissions import request_permissions, Permission
@@ -25,10 +25,6 @@ if platform == 'android':
         request_permissions([Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE])
     except Exception:
         pass
-    from jnius import autoclass
-    PythonActivity = autoclass('org.kivy.android.PythonActivity')
-    Intent = autoclass('android.content.Intent')
-    Uri = autoclass('android.net.Uri')
 
 OUTDOOR_ROWS = [
     'Application throughput downlink measurement average',
@@ -95,7 +91,7 @@ def device_label(rows, fallback):
 
 def process_outdoor(files):
     if not files:
-        raise ValueError('No hay archivos CSV cargados.')
+        raise ValueError('No hay archivos CSV seleccionados.')
     headers = None
     avg_values = {name: defaultdict(list) for name in OUTDOOR_ROWS[:2]}
     sum_values = {name: defaultdict(float) for name in OUTDOOR_ROWS[2:]}
@@ -131,7 +127,7 @@ def process_outdoor(files):
                         sum_values[matched_sum][j] += val
                         sum_seen[matched_sum][j] = True
     if headers is None:
-        raise ValueError('No se pudieron leer datos válidos de los archivos CSV.')
+        raise ValueError('No se pudieron leer datos de los CSV.')
     result = []
     for name in OUTDOOR_ROWS:
         vals = []
@@ -154,7 +150,7 @@ def process_indoor(files, mode):
         if m:
             matches.append((int(m.group(1)), path))
     if not matches:
-        raise ValueError('No se encontraron archivos terminados en .1.csv al .5.csv.')
+        raise ValueError('No se seleccionaron archivos terminados en .1.csv al .5.csv.')
 
     labels_by_suffix = defaultdict(set)
     values_by_group = defaultdict(list)
@@ -247,7 +243,7 @@ class ResumenAppUI(FloatLayout):
             font_size=36,
             bold=True
         )
-        self.folder_btn.bind(on_press=self.abrir_selector_archivos)
+        self.folder_btn.bind(on_press=self.seleccionar_archivos)
         main_layout.add_widget(self.folder_btn)
 
         # 4. Etiqueta de archivos seleccionados (size=36)
@@ -287,7 +283,7 @@ class ResumenAppUI(FloatLayout):
         self.status_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         main_layout.add_widget(self.status_label)
 
-        # 7. Tabla visual para copiar/ver información
+        # 7. Tabla visual para ver/copiar la información
         self.table_scroll = ScrollView(size_hint=(1, 1))
         self.table_grid = GridLayout(cols=1, spacing=3, size_hint_y=None)
         self.table_grid.bind(minimum_height=self.table_grid.setter('height'))
@@ -310,87 +306,39 @@ class ResumenAppUI(FloatLayout):
         self.credits_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         self.add_widget(self.credits_label)
 
-    def abrir_selector_archivos(self, instance):
-        if platform == 'android':
-            try:
-                intent = Intent(Intent.ACTION_GET_CONTENT)
-                intent.setType("*/*")
-                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, True)
-                
-                def on_activity_result(requestCode, resultCode, data):
-                    if requestCode == 0x777 and resultCode == -1 and data is not None:
-                        copied_files = []
-                        context = PythonActivity.mActivity.getApplicationContext()
-                        content_resolver = context.getContentResolver()
-                        
-                        clip_data = data.getClipData()
-                        uris = []
-                        if clip_data is not None:
-                            for i in range(clip_data.getItemCount()):
-                                uris.append(clip_data.getItemAt(i).getUri())
-                        elif data.getData() is not None:
-                            uris.append(data.getData())
-
-                        for idx, uri in enumerate(uris):
-                            path_copied = self.copy_uri_to_local(content_resolver, uri, idx)
-                            if path_copied:
-                                copied_files.append(path_copied)
-
-                        if copied_files:
-                            self.selected_files = copied_files
-                            nombres = [os.path.basename(f) for f in copied_files]
-                            self.path_label.text = f"Cargados: {len(nombres)} archivos .csv"
-                            self.status_label.text = "¡Archivos importados con éxito!"
-                        else:
-                            self.status_label.text = "Error al leer los archivos seleccionados."
-
-                PythonActivity.mActivity.bind(on_activity_result=on_activity_result)
-                PythonActivity.mActivity.startActivityForResult(intent, 0x777)
-            except Exception as e:
-                self.status_label.text = f"Error invocando selector: {e}"
-        else:
-            # Fallback en PC / Tkinter
-            try:
-                from tkinter import Tk, filedialog
-                root = Tk()
-                root.withdraw()
-                filenames = filedialog.askopenfilenames(title="Seleccionar CSVs", filetypes=[("CSV", "*.csv")])
-                if filenames:
-                    self.selected_files = list(filenames)
-                    self.path_label.text = f"Archivos: {len(filenames)} seleccionados"
-                    self.status_label.text = "Archivos cargados."
-            except Exception as ex:
-                self.status_label.text = f"Error en PC: {ex}"
-
-    def copy_uri_to_local(self, resolver, uri, index):
-        """Lee el InputStream de la URI de Android y copia los bytes al almacenamiento de la App."""
+    def seleccionar_archivos(self, instance):
         try:
-            filename = f"archivo_{index}.csv"
-            cursor = resolver.query(uri, None, None, None, None)
-            if cursor is not None and cursor.moveToFirst():
-                from android.provider import OpenableColumns
-                col_idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if col_idx != -1:
-                    real_name = cursor.getString(col_idx)
-                    if real_name:
-                        filename = real_name
-                cursor.close()
-
-            dest_path = os.path.join(self.work_dir, filename)
-            input_stream = resolver.openInputStream(uri)
-            
-            with open(dest_path, 'wb') as out_f:
-                buffer = bytearray(4096)
-                while True:
-                    read_bytes = input_stream.read(buffer)
-                    if read_bytes == -1:
-                        break
-                    out_f.write(buffer[:read_bytes])
-            input_stream.close()
-            return dest_path
+            filechooser.open_file(
+                title="Seleccionar archivos CSV",
+                multiple=True,
+                filters=[("CSV Files", "*.csv", "*.CSV")],
+                on_selection=self.on_files_selected
+            )
         except Exception as e:
-            print(f"Error copiando URI: {e}")
-            return None
+            self.status_label.text = f'Error al abrir selector: {e}'
+
+    def on_files_selected(self, selection):
+        if selection:
+            copied_files = []
+            for src_path in selection:
+                try:
+                    if src_path and os.path.exists(src_path):
+                        filename = os.path.basename(src_path)
+                        dest_path = os.path.join(self.work_dir, filename)
+                        shutil.copy(src_path, dest_path)
+                        copied_files.append(dest_path)
+                except Exception as ex:
+                    print(f"Error copiando archivo: {ex}")
+
+            if copied_files:
+                self.selected_files = copied_files
+                nombres = [os.path.basename(f) for f in copied_files]
+                self.path_label.text = f"Cargados: {len(nombres)} archivos .csv"
+                self.status_label.text = '¡Archivos importados correctamente!'
+            else:
+                self.status_label.text = 'No se pudieron leer los archivos seleccionados.'
+        else:
+            self.status_label.text = 'No se seleccionó ningún archivo.'
 
     def ejecutar_proceso(self, instance):
         files = self.selected_files
@@ -436,9 +384,9 @@ class ResumenAppUI(FloatLayout):
                 ws.append([v if v is not None else '' for v in row])
             wb.save(out_xlsx)
 
-            # Actualizar la tabla visual interactiva
+            # Actualizar la tabla visual interactiva en pantalla
             self.actualizar_tabla_visual(headers, formatted_data)
-            self.status_label.text = f'¡Éxito! Guardado en carpeta local:\n{self.work_dir}'
+            self.status_label.text = f'¡Éxito! Guardado en:\n{self.work_dir}'
         except Exception as e:
             self.status_label.text = f'Aviso: {str(e)}'
 

@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Resumen CSV Outdoor / Indoor con Kivy (Plyer seguro y tabla visual interactiva)."""
+"""Resumen CSV Outdoor / Indoor con Kivy
+Escáner automático interno de archivos CSV y Tabla Visual en Pantalla.
+"""
 import csv
 import os
 import re
 import math
 import statistics
-import shutil
 from collections import defaultdict
 
 from kivy.app import App
@@ -17,12 +18,15 @@ from kivy.uix.label import Label
 from kivy.uix.spinner import Spinner
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.gridlayout import GridLayout
-from plyer import filechooser
+from kivy.uix.textinput import TextInput
 
 if platform == 'android':
     from android.permissions import request_permissions, Permission
     try:
-        request_permissions([Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE])
+        request_permissions([
+            Permission.READ_EXTERNAL_STORAGE, 
+            Permission.WRITE_EXTERNAL_STORAGE
+        ])
     except Exception:
         pass
 
@@ -198,16 +202,27 @@ def process_indoor(files, mode):
 class ResumenAppUI(FloatLayout):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.selected_files = []
+        self.selected_files = set()
+        
         app = App.get_running_app()
         self.work_dir = app.user_data_dir if app else os.getcwd()
         os.makedirs(self.work_dir, exist_ok=True)
 
+        # Rutas comunes donde Android suele guardar archivos descargados
+        self.scan_paths = [
+            self.work_dir,
+            "/sdcard/Download",
+            "/sdcard/Download/CSVs",
+            "/sdcard/Download/CSVs/Outdoor",
+            "/sdcard/Download/CSVs/Indoor",
+            "/storage/emulated/0/Download"
+        ]
+
         main_layout = BoxLayout(
             orientation='vertical',
-            padding=20,
+            padding=15,
             spacing=10,
-            size_hint=(0.98, 0.95),
+            size_hint=(0.98, 0.96),
             pos_hint={'center_x': 0.5, 'center_y': 0.5}
         )
 
@@ -234,57 +249,61 @@ class ResumenAppUI(FloatLayout):
         )
         main_layout.add_widget(self.mode_spinner)
 
-        # 3. Botón para seleccionar archivos (size=36)
-        self.folder_btn = Button(
-            text='Seleccionar Archivos CSV', 
-            size_hint_y=None, 
-            height=75, 
+        # 3. Campo de texto para cambiar la ruta a escanear si es necesario
+        path_box = BoxLayout(orientation='horizontal', size_hint_y=None, height=65, spacing=10)
+        self.path_input = TextInput(
+            text="/sdcard/Download",
+            font_size=24,
+            size_hint_x=0.7,
+            multiline=False
+        )
+        path_box.add_widget(self.path_input)
+
+        scan_btn = Button(
+            text='Escanear Ruta',
+            font_size=24,
+            size_hint_x=0.3,
             background_color=(0.15, 0.5, 0.75, 1),
-            font_size=36,
             bold=True
         )
-        self.folder_btn.bind(on_press=self.seleccionar_archivos)
-        main_layout.add_widget(self.folder_btn)
+        scan_btn.bind(on_press=self.escanear_carpeta_manual)
+        path_box.add_widget(scan_btn)
+        main_layout.add_widget(path_box)
 
-        # 4. Etiqueta de archivos seleccionados (size=36)
-        self.path_label = Label(
-            text='Ningún archivo seleccionado', 
-            font_size=36, 
-            size_hint_y=None, 
-            height=85, 
+        # 4. Botón de Estado / Selección
+        self.status_label = Label(
+            text='Toca abajo los archivos .csv para seleccionarlos.', 
+            font_size=26, 
+            size_hint_y=None,
+            height=50,
             halign='center', 
             valign='middle',
-            bold=True
+            color=(1, 0.8, 0.2, 1)
         )
-        self.path_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
-        main_layout.add_widget(self.path_label)
+        self.status_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
+        main_layout.add_widget(self.status_label)
 
-        # 5. Botón Procesar (size=36)
+        # 5. Lista de archivos encontrados (Scroll con botones interactivos)
+        self.files_scroll = ScrollView(size_hint=(1, 0.35))
+        self.files_grid = GridLayout(cols=1, spacing=5, size_hint_y=None)
+        self.files_grid.bind(minimum_height=self.files_grid.setter('height'))
+        self.files_scroll.add_widget(self.files_grid)
+        main_layout.add_widget(self.files_scroll)
+
+        # 6. Botón Procesar (size=36)
         self.process_btn = Button(
             text='Procesar y Guardar Resultados', 
             size_hint_y=None, 
-            height=80, 
+            height=75, 
             background_color=(0.1, 0.7, 0.3, 1),
-            font_size=36,
+            font_size=34,
             bold=True
         )
         self.process_btn.bind(on_press=self.ejecutar_proceso)
         main_layout.add_widget(self.process_btn)
 
-        # 6. Estado (size=36)
-        self.status_label = Label(
-            text='Listo. Selecciona tus archivos .csv y presiona procesar.', 
-            font_size=36, 
-            size_hint_y=None,
-            height=70,
-            halign='center', 
-            valign='middle'
-        )
-        self.status_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
-        main_layout.add_widget(self.status_label)
-
-        # 7. Tabla visual para ver/copiar la información
-        self.table_scroll = ScrollView(size_hint=(1, 1))
+        # 7. Tabla visual inferior para ver/copiar resultados
+        self.table_scroll = ScrollView(size_hint=(1, 0.35))
         self.table_grid = GridLayout(cols=1, spacing=3, size_hint_y=None)
         self.table_grid.bind(minimum_height=self.table_grid.setter('height'))
         self.table_scroll.add_widget(self.table_grid)
@@ -306,47 +325,84 @@ class ResumenAppUI(FloatLayout):
         self.credits_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         self.add_widget(self.credits_label)
 
-    def seleccionar_archivos(self, instance):
-        try:
-            filechooser.open_file(
-                title="Seleccionar archivos CSV",
-                multiple=True,
-                filters=[("CSV Files", "*.csv", "*.CSV")],
-                on_selection=self.on_files_selected
-            )
-        except Exception as e:
-            self.status_label.text = f'Error al abrir selector: {e}'
+        # Escanear automáticamente al iniciar
+        self.auto_escanear()
 
-    def on_files_selected(self, selection):
-        if selection:
-            copied_files = []
-            for src_path in selection:
+    def auto_escanear(self):
+        encontrados = []
+        for p in self.scan_paths:
+            if os.path.exists(p):
                 try:
-                    if src_path and os.path.exists(src_path):
-                        filename = os.path.basename(src_path)
-                        dest_path = os.path.join(self.work_dir, filename)
-                        shutil.copy(src_path, dest_path)
-                        copied_files.append(dest_path)
-                except Exception as ex:
-                    print(f"Error copiando archivo: {ex}")
+                    for f in os.listdir(p):
+                        if f.lower().endswith('.csv'):
+                            full_p = os.path.join(p, f)
+                            if full_p not in encontrados:
+                                encontrados.append(full_p)
+                except Exception:
+                    pass
+        self.poblar_lista_archivos(encontrados)
 
-            if copied_files:
-                self.selected_files = copied_files
-                nombres = [os.path.basename(f) for f in copied_files]
-                self.path_label.text = f"Cargados: {len(nombres)} archivos .csv"
-                self.status_label.text = '¡Archivos importados correctamente!'
-            else:
-                self.status_label.text = 'No se pudieron leer los archivos seleccionados.'
+    def escanear_carpeta_manual(self, instance):
+        path = self.path_input.text.strip()
+        encontrados = []
+        if os.path.exists(path):
+            try:
+                for f in os.listdir(path):
+                    if f.lower().endswith('.csv'):
+                        encontrados.append(os.path.join(path, f))
+            except Exception as e:
+                self.status_label.text = f"Error al leer ruta: {e}"
+                return
+        self.poblar_lista_archivos(encontrados)
+        if encontrados:
+            self.status_label.text = f"¡Encontrados {len(encontrados)} archivos CSV!"
         else:
-            self.status_label.text = 'No se seleccionó ningún archivo.'
+            self.status_label.text = "No se hallaron archivos .csv en esta ruta."
+
+    def poblar_lista_archivos(self, file_paths):
+        self.files_grid.clear_widgets()
+        if not file_paths:
+            lbl = Label(text="No hay archivos CSV visibles. Escribe la ruta arriba y presiona 'Escanear Ruta'.", font_size=20, size_hint_y=None, height=50)
+            self.files_grid.add_widget(lbl)
+            return
+
+        for path in file_paths:
+            name = os.path.basename(path)
+            is_sel = path in self.selected_files
+            btn_text = f"[✓ SELECCIONADO] {name}" if is_sel else f"[ ] {name}"
+            bg_col = (0.1, 0.5, 0.2, 1) if is_sel else (0.2, 0.2, 0.2, 1)
+
+            btn = Button(
+                text=btn_text,
+                font_size=22,
+                size_hint_y=None,
+                height=60,
+                background_color=bg_col,
+                bold=True
+            )
+            btn.bind(on_press=lambda x, p=path, b=btn, n=name: self.toggle_file(p, b, n))
+            self.files_grid.add_widget(btn)
+
+    def toggle_file(self, path, button, filename):
+        if path in self.selected_files:
+            self.selected_files.remove(path)
+            button.text = f"[ ] {filename}"
+            button.background_color = (0.2, 0.2, 0.2, 1)
+        else:
+            self.selected_files.add(path)
+            button.text = f"[✓ SELECCIONADO] {filename}"
+            button.background_color = (0.1, 0.5, 0.2, 1)
+        self.status_label.text = f"Archivos seleccionados: {len(self.selected_files)}"
 
     def ejecutar_proceso(self, instance):
-        files = self.selected_files
+        files = list(self.selected_files)
         mode_val = self.mode_spinner.text
         
         if not files:
-            self.status_label.text = 'Error: No hay archivos .csv seleccionados.'
+            self.status_label.text = 'Error: Selecciona al menos un archivo de la lista.'
             return
+
+        target_dir = os.path.dirname(files[0]) if files else self.work_dir
 
         try:
             if mode_val == 'Outdoor':
@@ -356,7 +412,7 @@ class ResumenAppUI(FloatLayout):
                 headers, data = process_indoor(files, mode_tipo)
 
             # Exportar TXT
-            out_txt = os.path.join(self.work_dir, 'RESUMEN_CSV.txt')
+            out_txt = os.path.join(target_dir, 'RESUMEN_CSV.txt')
             table_lines = ['\t'.join(str(x) for x in headers)]
             
             formatted_data = []
@@ -374,7 +430,7 @@ class ResumenAppUI(FloatLayout):
                 f.write('\n'.join(table_lines).replace('\t', ';') + '\n')
 
             # Exportar Excel (.xlsx)
-            out_xlsx = os.path.join(self.work_dir, 'RESUMEN_CSV.xlsx')
+            out_xlsx = os.path.join(target_dir, 'RESUMEN_CSV.xlsx')
             from openpyxl import Workbook
             wb = Workbook()
             ws = wb.active
@@ -384,35 +440,33 @@ class ResumenAppUI(FloatLayout):
                 ws.append([v if v is not None else '' for v in row])
             wb.save(out_xlsx)
 
-            # Actualizar la tabla visual interactiva en pantalla
+            # Mostrar tabla en pantalla
             self.actualizar_tabla_visual(headers, formatted_data)
-            self.status_label.text = f'¡Éxito! Guardado en:\n{self.work_dir}'
+            self.status_label.text = f'¡Éxito! Guardado en:\n{target_dir}'
         except Exception as e:
             self.status_label.text = f'Aviso: {str(e)}'
 
     def actualizar_tabla_visual(self, headers, data):
         self.table_grid.clear_widgets()
         
-        # Fila de Encabezados
         header_text = " | ".join(str(h) for h in headers)
         lbl_head = Label(
             text=f"[B]{header_text}[/B]",
             markup=True,
-            font_size=28,
+            font_size=24,
             size_hint_y=None,
-            height=55,
+            height=50,
             color=(0.2, 0.8, 1, 1)
         )
         self.table_grid.add_widget(lbl_head)
 
-        # Filas de Datos
         for row in data:
             row_text = " | ".join(str(val) for val in row)
             lbl_row = Label(
                 text=row_text,
-                font_size=26,
+                font_size=22,
                 size_hint_y=None,
-                height=50,
+                height=45,
                 color=(1, 1, 1, 1)
             )
             self.table_grid.add_widget(lbl_row)
@@ -424,4 +478,5 @@ class ResumenApp(App):
 
 
 if __name__ == '__main__':
-    ResumenApp().run()
+    ResuvenerApp = ResumenApp()
+    ResuvenerApp.run()

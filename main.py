@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Resumen CSV Outdoor / Indoor con Kivy (Selector Nativo Android y Tipografía Grande)."""
+"""Resumen CSV Outdoor / Indoor con Kivy (Plyer filechooser optimizado y tipografía grande)."""
 import csv
 import os
 import re
@@ -13,14 +13,19 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.spinner import Spinner
+from plyer import filechooser
 
-# Configuración inicial para Android y PC
+# Configuración de permisos y rutas en Android
 if platform == 'android':
+    from android.permissions import request_permissions, Permission
+    try:
+        request_permissions([
+            Permission.READ_EXTERNAL_STORAGE, 
+            Permission.WRITE_EXTERNAL_STORAGE
+        ])
+    except Exception:
+        pass
     from jnius import autoclass
-    from android import mActivity
-    PythonActivity = autoclass('org.kivy.android.PythonActivity')
-    Intent = autoclass('android.content.Intent')
-    Uri = autoclass('android.net.Uri')
     Environment = autoclass('android.os.Environment')
     DEFAULT_FOLDER = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).getAbsolutePath()
 else:
@@ -231,7 +236,7 @@ class ResumenAppUI(FloatLayout):
         )
         main_layout.add_widget(self.mode_spinner)
 
-        # 3. Botón para abrir el selector nativo del sistema (font_size = 36)
+        # 3. Botón para abrir el selector de archivos (font_size = 36)
         self.folder_btn = Button(
             text='Seleccionar Archivos CSV', 
             size_hint_y=None, 
@@ -240,7 +245,7 @@ class ResumenAppUI(FloatLayout):
             font_size=36,
             bold=True
         )
-        self.folder_btn.bind(on_press=self.abrir_selector_nativo)
+        self.folder_btn.bind(on_press=self.seleccionar_archivos)
         main_layout.add_widget(self.folder_btn)
 
         # 4. Etiqueta de archivos seleccionados (font_size = 36)
@@ -294,105 +299,36 @@ class ResumenAppUI(FloatLayout):
         self.credits_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         self.add_widget(self.credits_label)
 
-    def abrir_selector_nativo(self, instance):
-        if platform == 'android':
-            try:
-                # Usar Intent nativo de Android para seleccionar múltiples archivos
-                intent = Intent(Intent.ACTION_GET_CONTENT)
-                intent.setType("*/*")
-                # Permitir selección múltiple
-                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, True)
-                m_activity = PythonActivity.mActivity
-                m_activity.startActivityForResult(intent, 0x1234)
-                
-                # Registrar hook para capturar la respuesta del selector nativo
-                def on_activity_result(requestCode, resultCode, data):
-                    if requestCode == 0x1234 and resultCode == -1: # RESULT_OK
-                        files = []
-                        if data is not None:
-                            clip_data = data.getClipData()
-                            if clip_data is not None:
-                                for i in range(clip_data.getItemCount()):
-                                    uri = clip_data.getItemAt(i).getUri()
-                                    path = self.get_real_path_from_uri(uri)
-                                    if path:
-                                        files.append(path)
-                            else:
-                                uri = data.getData()
-                                path = self.get_real_path_from_uri(uri)
-                                if path:
-                                    files.append(path)
-                        if files:
-                            self.selected_files = files
-                            nombres = [os.path.basename(f) for f in files]
-                            self.path_label.text = f"Archivos seleccionados:\n{len(nombres)} archivos cargados"
-                            self.status_label.text = "¡Archivos listos para procesar!"
-                    # Remover el hook después de usarlo para evitar duplicados
-                    try:
-                        m_activity.unbind(on_activity_result=on_activity_result)
-                    except Exception:
-                        pass
-
-                m_activity.bind(on_activity_result=on_activity_result)
-            except Exception as e:
-                self.status_label.text = f"Error al abrir selector nativo: {e}"
-        else:
-            # En PC usamos un selector simulado rápido o de prueba
-            from tkinter import Tk, filedialog
-            root = Tk()
-            root.withdraw()
-            filenames = filedialog.askopenfilenames(title="Seleccionar archivos CSV", filetypes=[("CSV Files", "*.csv")])
-            if filenames:
-                self.selected_files = list(filenames)
-                self.path_label.text = f"Archivos:\n{len(filenames)} seleccionados"
-                self.status_label.text = "¡Archivos listos!"
-
-    def get_real_path_from_uri(self, uri):
-        """Convierte una URI de Android a una ruta de archivo local accesible."""
+    def seleccionar_archivos(self, instance):
         try:
-            ctx = PythonActivity.mActivity.getApplicationContext()
-            content_resolver = ctx.getContentResolver()
-            
-            # Crear un archivo temporal en la caché de la app para leer los datos de forma segura
-            import java.io.File as JavaFile
-            import java.io.FileOutputStream as FileOutputStream
-            
-            cursor = content_resolver.query(uri, None, None, None, None)
-            name = "temp.csv"
-            if cursor is not None and cursor.moveToFirst():
-                from android.provider import OpenableColumns
-                name_idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if name_idx != -1:
-                    name = cursor.getString(name_idx)
-                cursor.close()
-            
-            cache_dir = ctx.getCacheDir().getAbsolutePath()
-            dest_file = JavaFile(cache_dir, name)
-            
-            input_stream = content_resolver.openInputStream(uri)
-            output_stream = FileOutputStream(dest_file)
-            
-            buffer = bytearray(1024)
-            while True:
-                length = input_stream.read(buffer)
-                if length == -1:
-                    break
-                output_stream.write(buffer, 0, length)
-            
-            input_stream.close()
-            output_stream.close()
-            
-            return dest_file.getAbsolutePath()
+            filechooser.open_file(
+                title="Seleccionar archivos CSV",
+                multiple=True,
+                filters=[("CSV Files", "*.csv", "*.CSV")],
+                on_selection=self.on_files_selected
+            )
         except Exception as e:
-            print(f"Error parseando URI: {e}")
-            return None
+            self.status_label.text = f'Error al abrir selector: {e}'
+
+    def on_files_selected(self, selection):
+        if selection:
+            self.selected_files = selection
+            nombres = [os.path.basename(f) for f in selection]
+            if len(nombres) <= 2:
+                texto = "Archivos:\n" + ", ".join(nombres)
+            else:
+                texto = f"Archivos seleccionados: {len(nombres)} archivos"
+            self.path_label.text = texto
+            self.status_label.text = '¡Archivos cargados correctamente!'
+        else:
+            self.status_label.text = 'No se seleccionó ningún archivo.'
 
     def ejecutar_proceso(self, instance):
         files = self.selected_files
         mode_val = self.mode_spinner.text
         
         if not files:
-            self.status_label.text = 'Error: No hay archivos seleccionados.'
+            self.status_label.text = 'Error: No hay archivos .csv seleccionados.'
             return
 
         target_dir = os.path.dirname(files[0]) if files else DEFAULT_FOLDER

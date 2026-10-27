@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Resumen CSV Outdoor / Indoor con Kivy (Explorador visual de carpetas y tipografía grande)."""
+"""Resumen CSV Outdoor / Indoor con Kivy (Selector Nativo Android y Tipografía Grande)."""
 import csv
 import os
 import re
@@ -13,22 +13,16 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.spinner import Spinner
-from kivy.uix.popup import Popup
-from kivy.uix.scrollview import ScrollView
-from kivy.uix.gridlayout import GridLayout
 
-# Configuración de rutas y permisos en Android
+# Configuración inicial para Android y PC
 if platform == 'android':
-    from android.permissions import request_permissions, Permission
-    try:
-        request_permissions([
-            Permission.READ_EXTERNAL_STORAGE, 
-            Permission.WRITE_EXTERNAL_STORAGE,
-            "android.permission.MANAGE_EXTERNAL_STORAGE"
-        ])
-    except Exception:
-        pass
-    DEFAULT_FOLDER = "/sdcard/Download"
+    from jnius import autoclass
+    from android import mActivity
+    PythonActivity = autoclass('org.kivy.android.PythonActivity')
+    Intent = autoclass('android.content.Intent')
+    Uri = autoclass('android.net.Uri')
+    Environment = autoclass('android.os.Environment')
+    DEFAULT_FOLDER = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).getAbsolutePath()
 else:
     DEFAULT_FOLDER = os.getcwd()
 
@@ -95,22 +89,9 @@ def device_label(rows, fallback):
             return row[1].strip()
     return fallback
 
-def obtener_archivos_folder(folder):
-    csv_files = []
-    if not folder or not os.path.exists(folder):
-        return csv_files
-    try:
-        for f in os.listdir(folder):
-            if f.lower().endswith('.csv'):
-                csv_files.append(os.path.join(folder, f))
-    except Exception:
-        pass
-    return sorted(csv_files, key=lambda p: os.path.basename(p).lower())
-
-def process_outdoor(folder):
-    files = obtener_archivos_folder(folder)
+def process_outdoor(files):
     if not files:
-        raise ValueError(f'No hay archivos .csv en:\n{folder}')
+        raise ValueError('No hay archivos CSV seleccionados.')
     headers = None
     avg_values = {name: defaultdict(list) for name in OUTDOOR_ROWS[:2]}
     sum_values = {name: defaultdict(float) for name in OUTDOOR_ROWS[2:]}
@@ -162,15 +143,14 @@ def process_outdoor(folder):
         result.append([name] + vals)
     return ['KPI'] + headers, result
 
-def process_indoor(folder, mode):
-    files = obtener_archivos_folder(folder)
+def process_indoor(files, mode):
     matches = []
     for path in files:
         m = re.search(r'[\._]([1-5])\.csv$', os.path.basename(path), flags=re.I)
         if m:
             matches.append((int(m.group(1)), path))
     if not matches:
-        raise ValueError(f'No hay archivos .1.csv al .5.csv en:\n{folder}')
+        raise ValueError('No se seleccionaron archivos terminados en .1.csv al .5.csv.')
 
     labels_by_suffix = defaultdict(set)
     values_by_group = defaultdict(list)
@@ -215,72 +195,10 @@ def process_indoor(folder, mode):
     return ['KPI'] + [label for _, label in columns], rows_out
 
 
-class FolderBrowserPopup(Popup):
-    def __init__(self, current_path, callback, **kwargs):
-        super().__init__(**kwargs)
-        self.title = "Seleccionar Carpeta"
-        self.size_hint = (0.95, 0.95)
-        self.current_path = current_path if os.path.exists(current_path) else '/sdcard'
-        self.callback = callback
-
-        layout = BoxLayout(orientation='vertical', spacing=10, padding=10)
-        
-        self.path_label = Label(text=self.current_path, font_size=24, size_hint_y=None, height=70)
-        layout.add_widget(self.path_label)
-
-        self.scroll = ScrollView()
-        self.grid = GridLayout(cols=1, spacing=5, size_hint_y=None)
-        self.grid.bind(minimum_height=self.grid.setter('height'))
-        self.scroll.add_widget(self.grid)
-        layout.add_widget(self.scroll)
-
-        btn_layout = BoxLayout(size_hint_y=None, height=80, spacing=10)
-        select_btn = Button(text="Elegir Esta Carpeta", font_size=28, background_color=(0.1, 0.7, 0.3, 1))
-        select_btn.bind(on_press=self.select_current)
-        btn_layout.add_widget(select_btn)
-
-        cancel_btn = Button(text="Cancelar", font_size=28, background_color=(0.8, 0.2, 0.2, 1))
-        cancel_btn.bind(on_press=lambda x: self.dismiss())
-        btn_layout.add_widget(cancel_btn)
-        
-        layout.add_widget(btn_layout)
-        self.add_widget(layout)
-        self.load_directories()
-
-    def load_directories(self):
-        self.grid.clear_widgets()
-        parent_dir = os.path.dirname(self.current_path)
-        if parent_dir and parent_dir != self.current_path:
-            btn_up = Button(text=".. [Subir de nivel]", font_size=26, size_hint_y=None, height=70, background_color=(0.3, 0.3, 0.3, 1))
-            btn_up.bind(on_press=lambda x: self.change_dir(parent_dir))
-            self.grid.add_widget(btn_up)
-
-        try:
-            items = sorted(os.listdir(self.current_path))
-            for item in items:
-                full_path = os.path.join(self.current_path, item)
-                if os.path.isdir(full_path):
-                    btn = Button(text=f"> {item}", font_size=26, size_hint_y=None, height=70, background_color=(0.2, 0.4, 0.6, 1))
-                    btn.bind(on_press=lambda x, p=full_path: self.change_dir(p))
-                    self.grid.add_widget(btn)
-        except Exception:
-            pass
-
-    def change_dir(self, path):
-        if os.path.exists(path):
-            self.current_path = path
-            self.path_label.text = path
-            self.load_directories()
-
-    def select_current(self, instance):
-        self.callback(self.current_path)
-        self.dismiss()
-
-
 class ResumenAppUI(FloatLayout):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.selected_folder = DEFAULT_FOLDER
+        self.selected_files = []
 
         main_layout = BoxLayout(
             orientation='vertical',
@@ -313,21 +231,21 @@ class ResumenAppUI(FloatLayout):
         )
         main_layout.add_widget(self.mode_spinner)
 
-        # 3. Botón para abrir el explorador visual de carpetas (font_size = 36)
+        # 3. Botón para abrir el selector nativo del sistema (font_size = 36)
         self.folder_btn = Button(
-            text='Seleccionar Carpeta con CSVs', 
+            text='Seleccionar Archivos CSV', 
             size_hint_y=None, 
             height=80, 
             background_color=(0.15, 0.5, 0.75, 1),
             font_size=36,
             bold=True
         )
-        self.folder_btn.bind(on_press=self.abrir_explorador)
+        self.folder_btn.bind(on_press=self.abrir_selector_nativo)
         main_layout.add_widget(self.folder_btn)
 
-        # 4. Etiqueta de ruta (font_size = 36)
+        # 4. Etiqueta de archivos seleccionados (font_size = 36)
         self.path_label = Label(
-            text=f'Carpeta:\n{self.selected_folder}', 
+            text='Ningún archivo seleccionado', 
             font_size=32, 
             size_hint_y=None, 
             height=140, 
@@ -352,8 +270,8 @@ class ResumenAppUI(FloatLayout):
 
         # 6. Estado (font_size = 36)
         self.status_label = Label(
-            text='Listo. Selecciona tu carpeta y presiona procesar.', 
-            font_size=36, 
+            text='Listo. Selecciona tus archivos y presiona procesar.', 
+            font_size=32, 
             halign='center', 
             valign='middle'
         )
@@ -376,33 +294,118 @@ class ResumenAppUI(FloatLayout):
         self.credits_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         self.add_widget(self.credits_label)
 
-    def abrir_explorador(self, instance):
-        popup = FolderBrowserPopup(self.selected_folder, self.on_folder_chosen)
-        popup.open()
+    def abrir_selector_nativo(self, instance):
+        if platform == 'android':
+            try:
+                # Usar Intent nativo de Android para seleccionar múltiples archivos
+                intent = Intent(Intent.ACTION_GET_CONTENT)
+                intent.setType("*/*")
+                # Permitir selección múltiple
+                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, True)
+                m_activity = PythonActivity.mActivity
+                m_activity.startActivityForResult(intent, 0x1234)
+                
+                # Registrar hook para capturar la respuesta del selector nativo
+                def on_activity_result(requestCode, resultCode, data):
+                    if requestCode == 0x1234 and resultCode == -1: # RESULT_OK
+                        files = []
+                        if data is not None:
+                            clip_data = data.getClipData()
+                            if clip_data is not None:
+                                for i in range(clip_data.getItemCount()):
+                                    uri = clip_data.getItemAt(i).getUri()
+                                    path = self.get_real_path_from_uri(uri)
+                                    if path:
+                                        files.append(path)
+                            else:
+                                uri = data.getData()
+                                path = self.get_real_path_from_uri(uri)
+                                if path:
+                                    files.append(path)
+                        if files:
+                            self.selected_files = files
+                            nombres = [os.path.basename(f) for f in files]
+                            self.path_label.text = f"Archivos seleccionados:\n{len(nombres)} archivos cargados"
+                            self.status_label.text = "¡Archivos listos para procesar!"
+                    # Remover el hook después de usarlo para evitar duplicados
+                    try:
+                        m_activity.unbind(on_activity_result=on_activity_result)
+                    except Exception:
+                        pass
 
-    def on_folder_chosen(self, folder_path):
-        if folder_path:
-            self.selected_folder = folder_path
-            self.path_label.text = f'Carpeta:\n{self.selected_folder}'
-            self.status_label.text = 'Carpeta seleccionada correctamente.'
+                m_activity.bind(on_activity_result=on_activity_result)
+            except Exception as e:
+                self.status_label.text = f"Error al abrir selector nativo: {e}"
+        else:
+            # En PC usamos un selector simulado rápido o de prueba
+            from tkinter import Tk, filedialog
+            root = Tk()
+            root.withdraw()
+            filenames = filedialog.askopenfilenames(title="Seleccionar archivos CSV", filetypes=[("CSV Files", "*.csv")])
+            if filenames:
+                self.selected_files = list(filenames)
+                self.path_label.text = f"Archivos:\n{len(filenames)} seleccionados"
+                self.status_label.text = "¡Archivos listos!"
+
+    def get_real_path_from_uri(self, uri):
+        """Convierte una URI de Android a una ruta de archivo local accesible."""
+        try:
+            ctx = PythonActivity.mActivity.getApplicationContext()
+            content_resolver = ctx.getContentResolver()
+            
+            # Crear un archivo temporal en la caché de la app para leer los datos de forma segura
+            import java.io.File as JavaFile
+            import java.io.FileOutputStream as FileOutputStream
+            
+            cursor = content_resolver.query(uri, None, None, None, None)
+            name = "temp.csv"
+            if cursor is not None and cursor.moveToFirst():
+                from android.provider import OpenableColumns
+                name_idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if name_idx != -1:
+                    name = cursor.getString(name_idx)
+                cursor.close()
+            
+            cache_dir = ctx.getCacheDir().getAbsolutePath()
+            dest_file = JavaFile(cache_dir, name)
+            
+            input_stream = content_resolver.openInputStream(uri)
+            output_stream = FileOutputStream(dest_file)
+            
+            buffer = bytearray(1024)
+            while True:
+                length = input_stream.read(buffer)
+                if length == -1:
+                    break
+                output_stream.write(buffer, 0, length)
+            
+            input_stream.close()
+            output_stream.close()
+            
+            return dest_file.getAbsolutePath()
+        except Exception as e:
+            print(f"Error parseando URI: {e}")
+            return None
 
     def ejecutar_proceso(self, instance):
-        folder = self.selected_folder
+        files = self.selected_files
         mode_val = self.mode_spinner.text
         
-        if not folder:
-            self.status_label.text = 'Error: No hay carpeta seleccionada.'
+        if not files:
+            self.status_label.text = 'Error: No hay archivos seleccionados.'
             return
+
+        target_dir = os.path.dirname(files[0]) if files else DEFAULT_FOLDER
 
         try:
             if mode_val == 'Outdoor':
-                headers, data = process_outdoor(folder)
+                headers, data = process_outdoor(files)
             else:
                 mode_tipo = 'Indoor Normal' if mode_val == 'Indoor Normal' else 'Indoor Forzado'
-                headers, data = process_indoor(folder, mode_tipo)
+                headers, data = process_indoor(files, mode_tipo)
 
             # Guardar TXT
-            out_txt = os.path.join(folder, 'RESUMEN_CSV.txt')
+            out_txt = os.path.join(target_dir, 'RESUMEN_CSV.txt')
             with open(out_txt, 'w', encoding='utf-8-sig', newline='') as f:
                 lines = ['\t'.join(str(x) for x in headers)]
                 for row in data:
@@ -410,7 +413,7 @@ class ResumenAppUI(FloatLayout):
                 f.write('\n'.join(lines).replace('\t', ';') + '\n')
 
             # Guardar Excel
-            out_xlsx = os.path.join(folder, 'RESUMEN_CSV.xlsx')
+            out_xlsx = os.path.join(target_dir, 'RESUMEN_CSV.xlsx')
             from openpyxl import Workbook
             wb = Workbook()
             ws = wb.active
@@ -420,7 +423,7 @@ class ResumenAppUI(FloatLayout):
                 ws.append([v if v is not None else '' for v in row])
             wb.save(out_xlsx)
 
-            self.status_label.text = f'¡Éxito! Guardados en:\n{folder}'
+            self.status_label.text = f'¡Éxito! Guardados en:\n{target_dir}'
         except Exception as e:
             self.status_label.text = f'Aviso: {str(e)}'
 

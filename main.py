@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Resumen CSV Outdoor / Indoor con Kivy (Explorador interno directo y tipografías grandes)."""
+"""Resumen CSV Outdoor / Indoor con Kivy (Explorador interno optimizado para Android)."""
 import csv
 import os
 import re
@@ -23,7 +23,8 @@ if platform == 'android':
     try:
         request_permissions([
             Permission.READ_EXTERNAL_STORAGE, 
-            Permission.WRITE_EXTERNAL_STORAGE
+            Permission.WRITE_EXTERNAL_STORAGE,
+            "android.permission.MANAGE_EXTERNAL_STORAGE"
         ])
     except Exception:
         pass
@@ -205,7 +206,7 @@ def process_indoor(files, mode):
 class InternalFileBrowser(Popup):
     def __init__(self, current_path, callback, **kwargs):
         super().__init__(**kwargs)
-        self.title = "Seleccionar Archivos CSV (Toca para agregar/quitar)"
+        self.title = "Seleccionar Archivos CSV (Toca para marcar/desmarcar)"
         self.size_hint = (0.95, 0.95)
         self.current_path = current_path if os.path.exists(current_path) else '/storage/emulated/0/'
         if os.path.isfile(self.current_path):

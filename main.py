@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Resumen CSV Outdoor / Indoor con Kivy (Explorador interno optimizado para Android)."""
+"""Resumen CSV Outdoor / Indoor con Kivy (Explorador visual de carpetas y tipografía grande)."""
 import csv
 import os
 import re
@@ -17,7 +17,7 @@ from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.gridlayout import GridLayout
 
-# Configuración de permisos y rutas en Android
+# Configuración de rutas y permisos en Android
 if platform == 'android':
     from android.permissions import request_permissions, Permission
     try:
@@ -28,9 +28,7 @@ if platform == 'android':
         ])
     except Exception:
         pass
-    from jnius import autoclass
-    Environment = autoclass('android.os.Environment')
-    DEFAULT_FOLDER = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).getAbsolutePath()
+    DEFAULT_FOLDER = "/sdcard/Download"
 else:
     DEFAULT_FOLDER = os.getcwd()
 
@@ -97,9 +95,22 @@ def device_label(rows, fallback):
             return row[1].strip()
     return fallback
 
-def process_outdoor(files):
+def obtener_archivos_folder(folder):
+    csv_files = []
+    if not folder or not os.path.exists(folder):
+        return csv_files
+    try:
+        for f in os.listdir(folder):
+            if f.lower().endswith('.csv'):
+                csv_files.append(os.path.join(folder, f))
+    except Exception:
+        pass
+    return sorted(csv_files, key=lambda p: os.path.basename(p).lower())
+
+def process_outdoor(folder):
+    files = obtener_archivos_folder(folder)
     if not files:
-        raise ValueError('No hay archivos CSV seleccionados.')
+        raise ValueError(f'No hay archivos .csv en:\n{folder}')
     headers = None
     avg_values = {name: defaultdict(list) for name in OUTDOOR_ROWS[:2]}
     sum_values = {name: defaultdict(float) for name in OUTDOOR_ROWS[2:]}
@@ -151,14 +162,15 @@ def process_outdoor(files):
         result.append([name] + vals)
     return ['KPI'] + headers, result
 
-def process_indoor(files, mode):
+def process_indoor(folder, mode):
+    files = obtener_archivos_folder(folder)
     matches = []
     for path in files:
         m = re.search(r'[\._]([1-5])\.csv$', os.path.basename(path), flags=re.I)
         if m:
             matches.append((int(m.group(1)), path))
     if not matches:
-        raise ValueError('No se seleccionaron archivos terminados en .1.csv al .5.csv.')
+        raise ValueError(f'No hay archivos .1.csv al .5.csv en:\n{folder}')
 
     labels_by_suffix = defaultdict(set)
     values_by_group = defaultdict(list)
@@ -203,20 +215,17 @@ def process_indoor(files, mode):
     return ['KPI'] + [label for _, label in columns], rows_out
 
 
-class InternalFileBrowser(Popup):
+class FolderBrowserPopup(Popup):
     def __init__(self, current_path, callback, **kwargs):
         super().__init__(**kwargs)
-        self.title = "Seleccionar Archivos CSV (Toca para marcar/desmarcar)"
+        self.title = "Seleccionar Carpeta"
         self.size_hint = (0.95, 0.95)
-        self.current_path = current_path if os.path.exists(current_path) else '/storage/emulated/0/'
-        if os.path.isfile(self.current_path):
-            self.current_path = os.path.dirname(self.current_path)
+        self.current_path = current_path if os.path.exists(current_path) else '/sdcard'
         self.callback = callback
-        self.selected_files_set = set()
 
         layout = BoxLayout(orientation='vertical', spacing=10, padding=10)
         
-        self.path_label = Label(text=self.current_path, font_size=22, size_hint_y=None, height=60)
+        self.path_label = Label(text=self.current_path, font_size=24, size_hint_y=None, height=70)
         layout.add_widget(self.path_label)
 
         self.scroll = ScrollView()
@@ -226,23 +235,23 @@ class InternalFileBrowser(Popup):
         layout.add_widget(self.scroll)
 
         btn_layout = BoxLayout(size_hint_y=None, height=80, spacing=10)
-        confirm_btn = Button(text="Confirmar Selección", font_size=26, background_color=(0.1, 0.7, 0.3, 1))
-        confirm_btn.bind(on_press=self.confirm_selection)
-        btn_layout.add_widget(confirm_btn)
+        select_btn = Button(text="Elegir Esta Carpeta", font_size=28, background_color=(0.1, 0.7, 0.3, 1))
+        select_btn.bind(on_press=self.select_current)
+        btn_layout.add_widget(select_btn)
 
-        cancel_btn = Button(text="Cancelar", font_size=26, background_color=(0.8, 0.2, 0.2, 1))
+        cancel_btn = Button(text="Cancelar", font_size=28, background_color=(0.8, 0.2, 0.2, 1))
         cancel_btn.bind(on_press=lambda x: self.dismiss())
         btn_layout.add_widget(cancel_btn)
         
         layout.add_widget(btn_layout)
         self.add_widget(layout)
-        self.load_contents()
+        self.load_directories()
 
-    def load_contents(self):
+    def load_directories(self):
         self.grid.clear_widgets()
         parent_dir = os.path.dirname(self.current_path)
         if parent_dir and parent_dir != self.current_path:
-            btn_up = Button(text=".. [Subir de carpeta]", font_size=24, size_hint_y=None, height=60, background_color=(0.3, 0.3, 0.3, 1))
+            btn_up = Button(text=".. [Subir de nivel]", font_size=26, size_hint_y=None, height=70, background_color=(0.3, 0.3, 0.3, 1))
             btn_up.bind(on_press=lambda x: self.change_dir(parent_dir))
             self.grid.add_widget(btn_up)
 
@@ -251,47 +260,27 @@ class InternalFileBrowser(Popup):
             for item in items:
                 full_path = os.path.join(self.current_path, item)
                 if os.path.isdir(full_path):
-                    btn = Button(text=f"[Carpeta] > {item}", font_size=24, size_hint_y=None, height=60, background_color=(0.2, 0.4, 0.6, 1))
+                    btn = Button(text=f"> {item}", font_size=26, size_hint_y=None, height=70, background_color=(0.2, 0.4, 0.6, 1))
                     btn.bind(on_press=lambda x, p=full_path: self.change_dir(p))
                     self.grid.add_widget(btn)
-                elif item.lower().endswith('.csv'):
-                    is_selected = full_path in self.selected_files_set
-                    prefix = "[✓ SELECCIONADO] " if is_selected else "[ ] "
-                    bg_color = (0.1, 0.5, 0.2, 1) if is_selected else (0.15, 0.15, 0.15, 1)
-                    
-                    btn = Button(text=f"{prefix}{item}", font_size=22, size_hint_y=None, height=60, background_color=bg_color)
-                    btn.bind(on_press=lambda x, p=full_path, b=btn, i=item: self.toggle_file(p, b, i))
-                    self.grid.add_widget(btn)
-        except Exception as e:
-            err_btn = Button(text=f"Error al leer: {e}", font_size=20, size_hint_y=None, height=60)
-            self.grid.add_widget(err_btn)
+        except Exception:
+            pass
 
     def change_dir(self, path):
         if os.path.exists(path):
             self.current_path = path
             self.path_label.text = path
-            self.load_contents()
+            self.load_directories()
 
-    def toggle_file(self, path, button_widget, filename):
-        if path in self.selected_files_set:
-            self.selected_files_set.remove(path)
-            button_widget.text = f"[ ] {filename}"
-            button_widget.background_color = (0.15, 0.15, 0.15, 1)
-        else:
-            self.selected_files_set.add(path)
-            button_widget.text = f"[✓ SELECCIONADO] {filename}"
-            button_widget.background_color = (0.1, 0.5, 0.2, 1)
-
-    def confirm_selection(self, instance):
-        self.callback(list(self.selected_files_set))
+    def select_current(self, instance):
+        self.callback(self.current_path)
         self.dismiss()
 
 
 class ResumenAppUI(FloatLayout):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.selected_files = []
-        self.current_browse_folder = DEFAULT_FOLDER
+        self.selected_folder = DEFAULT_FOLDER
 
         main_layout = BoxLayout(
             orientation='vertical',
@@ -324,24 +313,24 @@ class ResumenAppUI(FloatLayout):
         )
         main_layout.add_widget(self.mode_spinner)
 
-        # 3. Botón para abrir el explorador interno (font_size = 36)
+        # 3. Botón para abrir el explorador visual de carpetas (font_size = 36)
         self.folder_btn = Button(
-            text='Seleccionar Archivos CSV', 
+            text='Seleccionar Carpeta con CSVs', 
             size_hint_y=None, 
             height=80, 
             background_color=(0.15, 0.5, 0.75, 1),
             font_size=36,
             bold=True
         )
-        self.folder_btn.bind(on_press=self.abrir_explorador_interno)
+        self.folder_btn.bind(on_press=self.abrir_explorador)
         main_layout.add_widget(self.folder_btn)
 
-        # 4. Etiqueta de archivos seleccionados (font_size = 36)
+        # 4. Etiqueta de ruta (font_size = 36)
         self.path_label = Label(
-            text='Ningún archivo seleccionado', 
-            font_size=36, 
+            text=f'Carpeta:\n{self.selected_folder}', 
+            font_size=32, 
             size_hint_y=None, 
-            height=130, 
+            height=140, 
             halign='center', 
             valign='middle',
             bold=True
@@ -363,7 +352,7 @@ class ResumenAppUI(FloatLayout):
 
         # 6. Estado (font_size = 36)
         self.status_label = Label(
-            text='Listo. Selecciona tus archivos .csv y presiona procesar.', 
+            text='Listo. Selecciona tu carpeta y presiona procesar.', 
             font_size=36, 
             halign='center', 
             valign='middle'
@@ -387,43 +376,33 @@ class ResumenAppUI(FloatLayout):
         self.credits_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         self.add_widget(self.credits_label)
 
-    def abrir_explorador_interno(self, instance):
-        browser = InternalFileBrowser(self.current_browse_folder, self.on_files_chosen)
-        browser.open()
+    def abrir_explorador(self, instance):
+        popup = FolderBrowserPopup(self.selected_folder, self.on_folder_chosen)
+        popup.open()
 
-    def on_files_chosen(self, files):
-        if files:
-            self.selected_files = files
-            self.current_browse_folder = os.path.dirname(files[0])
-            nombres = [os.path.basename(f) for f in files]
-            if len(nombres) <= 2:
-                texto = "Archivos:\n" + ", ".join(nombres)
-            else:
-                texto = f"Archivos seleccionados: {len(nombres)} archivos"
-            self.path_label.text = texto
-            self.status_label.text = '¡Archivos cargados correctamente!'
-        else:
-            self.status_label.text = 'No se seleccionó ningún archivo.'
+    def on_folder_chosen(self, folder_path):
+        if folder_path:
+            self.selected_folder = folder_path
+            self.path_label.text = f'Carpeta:\n{self.selected_folder}'
+            self.status_label.text = 'Carpeta seleccionada correctamente.'
 
     def ejecutar_proceso(self, instance):
-        files = self.selected_files
+        folder = self.selected_folder
         mode_val = self.mode_spinner.text
         
-        if not files:
-            self.status_label.text = 'Error: No hay archivos .csv seleccionados.'
+        if not folder:
+            self.status_label.text = 'Error: No hay carpeta seleccionada.'
             return
-
-        target_dir = os.path.dirname(files[0])
 
         try:
             if mode_val == 'Outdoor':
-                headers, data = process_outdoor(files)
+                headers, data = process_outdoor(folder)
             else:
                 mode_tipo = 'Indoor Normal' if mode_val == 'Indoor Normal' else 'Indoor Forzado'
-                headers, data = process_indoor(files, mode_tipo)
+                headers, data = process_indoor(folder, mode_tipo)
 
             # Guardar TXT
-            out_txt = os.path.join(target_dir, 'RESUMEN_CSV.txt')
+            out_txt = os.path.join(folder, 'RESUMEN_CSV.txt')
             with open(out_txt, 'w', encoding='utf-8-sig', newline='') as f:
                 lines = ['\t'.join(str(x) for x in headers)]
                 for row in data:
@@ -431,7 +410,7 @@ class ResumenAppUI(FloatLayout):
                 f.write('\n'.join(lines).replace('\t', ';') + '\n')
 
             # Guardar Excel
-            out_xlsx = os.path.join(target_dir, 'RESUMEN_CSV.xlsx')
+            out_xlsx = os.path.join(folder, 'RESUMEN_CSV.xlsx')
             from openpyxl import Workbook
             wb = Workbook()
             ws = wb.active
@@ -441,7 +420,7 @@ class ResumenAppUI(FloatLayout):
                 ws.append([v if v is not None else '' for v in row])
             wb.save(out_xlsx)
 
-            self.status_label.text = f'¡Éxito! Guardados en:\n{target_dir}'
+            self.status_label.text = f'¡Éxito! Guardados en:\n{folder}'
         except Exception as e:
             self.status_label.text = f'Aviso: {str(e)}'
 

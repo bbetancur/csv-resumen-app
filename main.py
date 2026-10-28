@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 """Resumen CSV Outdoor / Indoor con Kivy
-Selector Nativo Android SAF (Storage Access Framework) + Copia local automática + Tabla visual.
+Selector Nativo Android SAF (Storage Access Framework) + android.activity + Copia local automática + Tabla visual.
 """
 import csv
 import os
 import re
 import math
 import statistics
-from collections import defaultdict
 
 from kivy.app import App
 from kivy.utils import platform
@@ -21,7 +20,12 @@ from kivy.uix.gridlayout import GridLayout
 
 if platform == 'android':
     from jnius import autoclass
-    PythonActivity = autoclass('org.kivy.android.PythonActivity')
+    from android.activity import activity
+    from android.permissions import request_permissions, Permission
+    try:
+        request_permissions([Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE])
+    except Exception:
+        pass
     Intent = autoclass('android.content.Intent')
 
 OUTDOOR_ROWS = [
@@ -307,32 +311,28 @@ class ResumenAppUI(FloatLayout):
     def abrir_selector_nativo(self, instance):
         if platform == 'android':
             try:
-                # Usar ACTION_OPEN_DOCUMENT para compatibilidad total con Scoped Storage
                 intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
                 intent.addCategory(Intent.CATEGORY_OPENABLE)
                 intent.setType("*/*")
                 intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, True)
-                
-                # Definir callback mediante extensiones nativas de Kivy/PythonActivity
-                activity = PythonActivity.mActivity
-                
-                def on_activity_result(request_code, result_code, intent_data):
-                    if request_code == 9999 and result_code == -1: # RESULT_OK
+
+                def on_activity_result(requestCode, resultCode, intentData):
+                    if requestCode == 9999 and resultCode == -1: # RESULT_OK
                         copied = []
                         try:
-                            context = activity.getApplicationContext()
+                            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+                            context = PythonActivity.mActivity.getApplicationContext()
                             resolver = context.getContentResolver()
-                            
-                            clip_data = intent_data.getClipData()
+
+                            clip_data = intentData.getClipData()
                             uris = []
                             if clip_data is not None:
                                 for i in range(clip_data.getItemCount()):
                                     uris.append(clip_data.getItemAt(i).getUri())
-                            elif intent_data.getData() is not None:
-                                uris.append(intent_data.getData())
+                            elif intentData.getData() is not None:
+                                uris.append(intentData.getData())
 
                             for idx, uri in enumerate(uris):
-                                # Obtener nombre real del archivo
                                 filename = f"archivo_{idx}.csv"
                                 cursor = resolver.query(uri, None, None, None, None)
                                 if cursor is not None and cursor.moveToFirst():
@@ -344,7 +344,6 @@ class ResumenAppUI(FloatLayout):
                                             filename = rn
                                     cursor.close()
 
-                                # Copiar stream de bytes directamente a la carpeta interna de trabajo
                                 dest_path = os.path.join(self.work_dir, filename)
                                 input_stream = resolver.openInputStream(uri)
                                 with open(dest_path, 'wb') as out_f:
@@ -364,13 +363,19 @@ class ResumenAppUI(FloatLayout):
                         except Exception as inner_e:
                             self.status_label.text = f"Error copiando: {inner_e}"
 
-                # Registrar resultado temporal en la actividad de Android
-                activity.result_callback = on_activity_result
-                activity.startActivityForResult(intent, 9999)
+                    # Desvincular para evitar fugas de memoria o múltiples llamadas
+                    try:
+                        activity.unbind(on_activity_result=on_activity_result)
+                    except Exception:
+                        pass
+
+                activity.bind(on_activity_result=on_activity_result)
+                PythonActivity = autoclass('org.kivy.android.PythonActivity')
+                PythonActivity.mActivity.startActivityForResult(intent, 9999)
             except Exception as e:
                 self.status_label.text = f"Error lanzando selector: {e}"
         else:
-            # Selector simulado para pruebas en PC (Tkinter)
+            # Fallback en PC para pruebas de desarrollo
             try:
                 from tkinter import Tk, filedialog
                 root = Tk()

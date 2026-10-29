@@ -67,7 +67,7 @@ jobs:
       - name: Compilar APK con Buildozer
         env:
           ANDROIDNDK: "23b"
-        run: buildozer -v android debug deploy run
+        run: buildozer -v android debug
 
       - name: Subir APK como artefacto
         uses: actions/upload-artifact@v4

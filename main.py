@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Resumen CSV Outdoor / Indoor con Kivy
-Selector Nativo Android SAF (Storage Access Framework) + android.activity + Copia local automática + Tabla visual.
-"""
+"""Resumen CSV Outdoor / Indoor con Kivy (Selector Nativo Seguro y Tabla Visual)."""
 import csv
 import os
 import re
@@ -19,14 +17,11 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.gridlayout import GridLayout
 
 if platform == 'android':
-    from jnius import autoclass
-    from android.activity import activity
     from android.permissions import request_permissions, Permission
     try:
         request_permissions([Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE])
     except Exception:
         pass
-    Intent = autoclass('android.content.Intent')
 
 OUTDOOR_ROWS = [
     'Application throughput downlink measurement average',
@@ -236,7 +231,7 @@ class ResumenAppUI(FloatLayout):
         )
         main_layout.add_widget(self.mode_spinner)
 
-        # 3. Botón para abrir el selector nativo de Android (size=36)
+        # 3. Botón para abrir el selector (size=36)
         self.folder_btn = Button(
             text='Seleccionar Archivos CSV', 
             size_hint_y=None, 
@@ -285,7 +280,7 @@ class ResumenAppUI(FloatLayout):
         self.status_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         main_layout.add_widget(self.status_label)
 
-        # 7. Tabla visual interactiva para ver y copiar resultados
+        # 7. Tabla visual interactiva
         self.table_scroll = ScrollView(size_hint=(1, 1))
         self.table_grid = GridLayout(cols=1, spacing=3, size_hint_y=None)
         self.table_grid.bind(minimum_height=self.table_grid.setter('height'))
@@ -311,6 +306,12 @@ class ResumenAppUI(FloatLayout):
     def abrir_selector_nativo(self, instance):
         if platform == 'android':
             try:
+                from jnius import autoclass
+                from android.activity import activity
+                
+                Intent = autoclass('android.content.Intent')
+                PythonActivity = autoclass('org.kivy.android.PythonActivity')
+
                 intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
                 intent.addCategory(Intent.CATEGORY_OPENABLE)
                 intent.setType("*/*")
@@ -320,16 +321,15 @@ class ResumenAppUI(FloatLayout):
                     if requestCode == 9999 and resultCode == -1: # RESULT_OK
                         copied = []
                         try:
-                            PythonActivity = autoclass('org.kivy.android.PythonActivity')
                             context = PythonActivity.mActivity.getApplicationContext()
                             resolver = context.getContentResolver()
 
-                            clip_data = intentData.getClipData()
+                            clip_data = intentData.getClipData() if intentData else None
                             uris = []
                             if clip_data is not None:
                                 for i in range(clip_data.getItemCount()):
                                     uris.append(clip_data.getItemAt(i).getUri())
-                            elif intentData.getData() is not None:
+                            elif intentData and intentData.getData() is not None:
                                 uris.append(intentData.getData())
 
                             for idx, uri in enumerate(uris):
@@ -363,14 +363,12 @@ class ResumenAppUI(FloatLayout):
                         except Exception as inner_e:
                             self.status_label.text = f"Error copiando: {inner_e}"
 
-                    # Desvincular para evitar fugas de memoria o múltiples llamadas
                     try:
                         activity.unbind(on_activity_result=on_activity_result)
                     except Exception:
                         pass
 
                 activity.bind(on_activity_result=on_activity_result)
-                PythonActivity = autoclass('org.kivy.android.PythonActivity')
                 PythonActivity.mActivity.startActivityForResult(intent, 9999)
             except Exception as e:
                 self.status_label.text = f"Error lanzando selector: {e}"

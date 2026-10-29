@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Resumen CSV Outdoor / Indoor con Kivy (Solución robusta anti-bloqueos en Android)."""
+"""Resumen CSV Outdoor / Indoor con Kivy (Apertura externa, importación automática a tablas internas)."""
 import csv
 import os
 import re
@@ -16,7 +16,6 @@ from kivy.uix.label import Label
 from kivy.uix.spinner import Spinner
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.gridlayout import GridLayout
-from kivy.uix.textinput import TextInput
 from plyer import filechooser
 
 if platform == 'android':
@@ -91,7 +90,7 @@ def device_label(rows, fallback):
 
 def process_outdoor(files):
     if not files:
-        raise ValueError('No hay archivos CSV seleccionados.')
+        raise ValueError('No hay archivos CSV en las tablas internas.')
     headers = None
     avg_values = {name: defaultdict(list) for name in OUTDOOR_ROWS[:2]}
     sum_values = {name: defaultdict(float) for name in OUTDOOR_ROWS[2:]}
@@ -150,7 +149,7 @@ def process_indoor(files, mode):
         if m:
             matches.append((int(m.group(1)), path))
     if not matches:
-        raise ValueError('No se seleccionaron archivos terminados en .1.csv al .5.csv.')
+        raise ValueError('No se encontraron archivos terminados en .1.csv al .5.csv en las tablas internas.')
 
     labels_by_suffix = defaultdict(set)
     values_by_group = defaultdict(list)
@@ -211,12 +210,12 @@ class ResumenAppUI(FloatLayout):
             pos_hint={'center_x': 0.5, 'center_y': 0.5}
         )
 
-        # 1. Título principal (size=36)
+        # 1. Título principal (font_size = 36)
         self.title_label = Label(
             text='Resumen CSV Outdoor / Indoor', 
             font_size=36, 
             size_hint_y=None, 
-            height=60, 
+            height=65, 
             bold=True,
             halign='center',
             valign='middle'
@@ -224,34 +223,34 @@ class ResumenAppUI(FloatLayout):
         self.title_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         main_layout.add_widget(self.title_label)
 
-        # 2. Selector de Modo (size=36)
+        # 2. Selector de Modo (font_size = 36)
         self.mode_spinner = Spinner(
             text='Outdoor', 
             values=('Outdoor', 'Indoor Normal', 'Indoor Forzado'), 
             size_hint_y=None, 
-            height=65,
+            height=70,
             font_size=36
         )
         main_layout.add_widget(self.mode_spinner)
 
-        # 3. Botón para abrir selector con Plyer seguro
-        self.folder_btn = Button(
-            text='Seleccionar Archivos CSV', 
+        # 3. Botón para abrir archivos de manera externa (font_size = 36)
+        self.external_btn = Button(
+            text='Abrir y Seleccionar CSVs Externos', 
             size_hint_y=None, 
-            height=70, 
+            height=75, 
             background_color=(0.15, 0.5, 0.75, 1),
-            font_size=34,
+            font_size=36,
             bold=True
         )
-        self.folder_btn.bind(on_press=self.seleccionar_con_plyer)
-        main_layout.add_widget(self.folder_btn)
+        self.external_btn.bind(on_press=self.abrir_externamente)
+        main_layout.add_widget(self.external_btn)
 
-        # 4. Estado de archivos
+        # 4. Etiqueta de estado de archivos internos (font_size = 32)
         self.path_label = Label(
-            text='Ningún archivo seleccionado', 
-            font_size=30, 
+            text='Tablas internas vacías', 
+            font_size=32, 
             size_hint_y=None, 
-            height=70, 
+            height=75, 
             halign='center', 
             valign='middle',
             bold=True
@@ -259,31 +258,31 @@ class ResumenAppUI(FloatLayout):
         self.path_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         main_layout.add_widget(self.path_label)
 
-        # 5. Botón Procesar
+        # 5. Botón Procesar (font_size = 36)
         self.process_btn = Button(
-            text='Procesar y Guardar Resultados', 
+            text='Procesar Tablas y Guardar', 
             size_hint_y=None, 
-            height=75, 
+            height=80, 
             background_color=(0.1, 0.7, 0.3, 1),
-            font_size=34,
+            font_size=36,
             bold=True
         )
         self.process_btn.bind(on_press=self.ejecutar_proceso)
         main_layout.add_widget(self.process_btn)
 
-        # 6. Estado General
+        # 6. Estado (font_size = 32)
         self.status_label = Label(
-            text='Listo. Selecciona tus archivos o usa la caché local.', 
-            font_size=26, 
+            text='Listo. Abre tus CSV externos para volcarlos en tablas.', 
+            font_size=32, 
             size_hint_y=None,
-            height=50,
+            height=60,
             halign='center', 
             valign='middle'
         )
         self.status_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         main_layout.add_widget(self.status_label)
 
-        # 7. Tabla visual interactiva para ver y copiar datos
+        # 7. Tabla visual interactiva en pantalla para ver los cálculos
         self.table_scroll = ScrollView(size_hint=(1, 1))
         self.table_grid = GridLayout(cols=1, spacing=3, size_hint_y=None)
         self.table_grid.bind(minimum_height=self.table_grid.setter('height'))
@@ -292,7 +291,7 @@ class ResumenAppUI(FloatLayout):
 
         self.add_widget(main_layout)
 
-        # 8. Créditos (size=28)
+        # 8. Créditos (font_size = 28)
         self.credits_label = Label(
             text='creado por Benjamín Betancur\nbenjamin.betancur@gmail.com',
             font_size=28,
@@ -306,63 +305,64 @@ class ResumenAppUI(FloatLayout):
         self.credits_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         self.add_widget(self.credits_label)
 
-        # Comprobar si hay archivos previos en la carpeta de trabajo local
-        self.buscar_archivos_locales()
+        # Cargar automáticamente los archivos que ya estén en la tabla interna de la app
+        self.sincronizar_tablas_internas()
 
-    def seleccionar_con_plyer(self, instance):
+    def abrir_externamente(self, instance):
         try:
             filechooser.open_file(
-                title="Seleccionar archivos CSV",
+                title="Seleccionar archivos CSV externos",
                 multiple=True,
                 filters=[("CSV Files", "*.csv", "*.CSV")],
-                on_selection=self.on_files_selected
+                on_selection=self.on_external_files_chosen
             )
         except Exception as e:
-            self.status_label.text = f'Error en selector: {e}'
+            self.status_label.text = f'Error al abrir externamente: {e}'
 
-    def on_files_selected(self, selection):
+    def on_external_files_chosen(self, selection):
         if selection:
-            copied = []
-            for path in selection:
+            importados_count = 0
+            for src_path in selection:
                 try:
-                    if os.path.exists(path):
-                        filename = os.path.basename(path)
-                        dest = os.path.join(self.work_dir, filename)
-                        with open(path, 'rb') as f_in, open(dest, 'wb') as f_out:
+                    if src_path and os.path.exists(src_path):
+                        filename = os.path.basename(src_path)
+                        # Copia automática directa a la tabla/memoria interna de la app
+                        dest_path = os.path.join(self.work_dir, filename)
+                        with open(src_path, 'rb') as f_in, open(dest_path, 'wb') as f_out:
                             f_out.write(f_in.read())
-                        copied.append(dest)
+                        importados_count += 1
                 except Exception as ex:
-                    print(f"Error copiando: {ex}")
+                    print(f"Error volcando archivo: {ex}")
             
-            if copied:
-                self.selected_files = copied
-                self.path_label.text = f"Cargados: {len(copied)} archivos .csv"
-                self.status_label.text = "¡Archivos listos para procesar!"
+            if importados_count > 0:
+                self.sincronizar_tablas_internas()
+                self.status_label.text = f'¡Volcados {importados_count} archivos a tablas internas!'
             else:
-                self.status_label.text = "Error al importar los archivos."
+                self.status_label.text = 'Error al volcar la información.'
         else:
-            self.status_label.text = "No se seleccionó ningún archivo."
+            self.status_label.text = 'No se seleccionó ningún archivo.'
 
-    def buscar_archivos_locales(self):
-        """Busca automáticamente si ya hay archivos .csv en la carpeta interna de la app."""
+    def sincronizar_tablas_internas(self):
+        self.selected_files = []
         try:
-            encontrados = []
             for f in os.listdir(self.work_dir):
                 if f.lower().endswith('.csv'):
-                    encontrados.append(os.path.join(self.work_dir, f))
-            if encontrados:
-                self.selected_files = encontrados
-                self.path_label.text = f"Caché interna: {len(encontrados)} archivos"
-                self.status_label.text = "Archivos locales detectados."
+                    self.selected_files.append(os.path.join(self.work_dir, f))
+            
+            if self.selected_files:
+                self.path_label.text = f"Tablas internas: {len(self.selected_files)} archivos .csv cargados"
+            else:
+                self.path_label.text = "Tablas internas vacías"
         except Exception:
             pass
 
     def ejecutar_proceso(self, instance):
+        self.sincronizar_tablas_internas()
         files = self.selected_files
         mode_val = self.mode_spinner.text
         
         if not files:
-            self.status_label.text = 'Error: No hay archivos .csv seleccionados.'
+            self.status_label.text = 'Error: No hay archivos .csv en las tablas internas.'
             return
 
         try:
@@ -401,9 +401,9 @@ class ResumenAppUI(FloatLayout):
                 ws.append([v if v is not None else '' for v in row])
             wb.save(out_xlsx)
 
-            # Mostrar tabla en pantalla
+            # Mostrar tabla interactiva en pantalla con los resultados procesados
             self.actualizar_tabla_visual(headers, formatted_data)
-            self.status_label.text = f'¡Éxito! Guardado en:\n{self.work_dir}'
+            self.status_label.text = f'¡Proceso exitoso! Guardado en:\n{self.work_dir}'
         except Exception as e:
             self.status_label.text = f'Aviso: {str(e)}'
 

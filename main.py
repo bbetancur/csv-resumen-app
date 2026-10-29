@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Resumen CSV Outdoor / Indoor con Kivy (Selector Nativo Seguro y Tabla Visual)."""
+"""Resumen CSV Outdoor / Indoor con Kivy (Solución robusta anti-bloqueos en Android)."""
 import csv
 import os
 import re
 import math
 import statistics
+from collections import defaultdict
 
 from kivy.app import App
 from kivy.utils import platform
@@ -15,6 +16,8 @@ from kivy.uix.label import Label
 from kivy.uix.spinner import Spinner
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.gridlayout import GridLayout
+from kivy.uix.textinput import TextInput
+from plyer import filechooser
 
 if platform == 'android':
     from android.permissions import request_permissions, Permission
@@ -124,7 +127,7 @@ def process_outdoor(files):
                         sum_values[matched_sum][j] += val
                         sum_seen[matched_sum][j] = True
     if headers is None:
-        raise ValueError('No se pudieron leer datos de los CSV.')
+        raise ValueError('No se pudieron leer datos válidos de los CSV.')
     result = []
     for name in OUTDOOR_ROWS:
         vals = []
@@ -202,9 +205,9 @@ class ResumenAppUI(FloatLayout):
 
         main_layout = BoxLayout(
             orientation='vertical',
-            padding=20,
+            padding=15,
             spacing=10,
-            size_hint=(0.98, 0.95),
+            size_hint=(0.98, 0.96),
             pos_hint={'center_x': 0.5, 'center_y': 0.5}
         )
 
@@ -213,7 +216,7 @@ class ResumenAppUI(FloatLayout):
             text='Resumen CSV Outdoor / Indoor', 
             font_size=36, 
             size_hint_y=None, 
-            height=65, 
+            height=60, 
             bold=True,
             halign='center',
             valign='middle'
@@ -226,29 +229,29 @@ class ResumenAppUI(FloatLayout):
             text='Outdoor', 
             values=('Outdoor', 'Indoor Normal', 'Indoor Forzado'), 
             size_hint_y=None, 
-            height=70,
+            height=65,
             font_size=36
         )
         main_layout.add_widget(self.mode_spinner)
 
-        # 3. Botón para abrir el selector (size=36)
+        # 3. Botón para abrir selector con Plyer seguro
         self.folder_btn = Button(
             text='Seleccionar Archivos CSV', 
             size_hint_y=None, 
-            height=75, 
+            height=70, 
             background_color=(0.15, 0.5, 0.75, 1),
-            font_size=36,
+            font_size=34,
             bold=True
         )
-        self.folder_btn.bind(on_press=self.abrir_selector_nativo)
+        self.folder_btn.bind(on_press=self.seleccionar_con_plyer)
         main_layout.add_widget(self.folder_btn)
 
-        # 4. Etiqueta de archivos seleccionados (size=36)
+        # 4. Estado de archivos
         self.path_label = Label(
             text='Ningún archivo seleccionado', 
-            font_size=36, 
+            font_size=30, 
             size_hint_y=None, 
-            height=85, 
+            height=70, 
             halign='center', 
             valign='middle',
             bold=True
@@ -256,31 +259,31 @@ class ResumenAppUI(FloatLayout):
         self.path_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         main_layout.add_widget(self.path_label)
 
-        # 5. Botón Procesar (size=36)
+        # 5. Botón Procesar
         self.process_btn = Button(
             text='Procesar y Guardar Resultados', 
             size_hint_y=None, 
-            height=80, 
+            height=75, 
             background_color=(0.1, 0.7, 0.3, 1),
-            font_size=36,
+            font_size=34,
             bold=True
         )
         self.process_btn.bind(on_press=self.ejecutar_proceso)
         main_layout.add_widget(self.process_btn)
 
-        # 6. Estado (size=36)
+        # 6. Estado General
         self.status_label = Label(
-            text='Listo. Selecciona tus archivos .csv y presiona procesar.', 
-            font_size=36, 
+            text='Listo. Selecciona tus archivos o usa la caché local.', 
+            font_size=26, 
             size_hint_y=None,
-            height=70,
+            height=50,
             halign='center', 
             valign='middle'
         )
         self.status_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         main_layout.add_widget(self.status_label)
 
-        # 7. Tabla visual interactiva
+        # 7. Tabla visual interactiva para ver y copiar datos
         self.table_scroll = ScrollView(size_hint=(1, 1))
         self.table_grid = GridLayout(cols=1, spacing=3, size_hint_y=None)
         self.table_grid.bind(minimum_height=self.table_grid.setter('height'))
@@ -303,94 +306,56 @@ class ResumenAppUI(FloatLayout):
         self.credits_label.bind(size=lambda s, w: setattr(s, 'text_size', w))
         self.add_widget(self.credits_label)
 
-    def abrir_selector_nativo(self, instance):
-        if platform == 'android':
-            try:
-                from jnius import autoclass
-                from android.activity import activity
-                
-                Intent = autoclass('android.content.Intent')
-                PythonActivity = autoclass('org.kivy.android.PythonActivity')
+        # Comprobar si hay archivos previos en la carpeta de trabajo local
+        self.buscar_archivos_locales()
 
-                intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
-                intent.addCategory(Intent.CATEGORY_OPENABLE)
-                intent.setType("*/*")
-                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, True)
+    def seleccionar_con_plyer(self, instance):
+        try:
+            filechooser.open_file(
+                title="Seleccionar archivos CSV",
+                multiple=True,
+                filters=[("CSV Files", "*.csv", "*.CSV")],
+                on_selection=self.on_files_selected
+            )
+        except Exception as e:
+            self.status_label.text = f'Error en selector: {e}'
 
-                def on_activity_result(requestCode, resultCode, intentData):
-                    if requestCode == 9999 and resultCode == -1: # RESULT_OK
-                        copied = []
-                        try:
-                            context = PythonActivity.mActivity.getApplicationContext()
-                            resolver = context.getContentResolver()
-
-                            clip_data = intentData.getClipData() if intentData else None
-                            uris = []
-                            if clip_data is not None:
-                                for i in range(clip_data.getItemCount()):
-                                    uris.append(clip_data.getItemAt(i).getUri())
-                            elif intentData and intentData.getData() is not None:
-                                uris.append(intentData.getData())
-
-                            for idx, uri in enumerate(uris):
-                                filename = f"archivo_{idx}.csv"
-                                cursor = resolver.query(uri, None, None, None, None)
-                                if cursor is not None and cursor.moveToFirst():
-                                    from android.provider import OpenableColumns
-                                    c_idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                                    if c_idx != -1:
-                                        rn = cursor.getString(c_idx)
-                                        if rn:
-                                            filename = rn
-                                    cursor.close()
-
-                                dest_path = os.path.join(self.work_dir, filename)
-                                input_stream = resolver.openInputStream(uri)
-                                with open(dest_path, 'wb') as out_f:
-                                    buf = bytearray(4096)
-                                    while True:
-                                        read_bytes = input_stream.read(buf)
-                                        if read_bytes == -1:
-                                            break
-                                        out_f.write(buf[:read_bytes])
-                                input_stream.close()
-                                copied.append(dest_path)
-
-                            if copied:
-                                self.selected_files = copied
-                                self.path_label.text = f"Cargados: {len(copied)} archivos .csv"
-                                self.status_label.text = "¡Archivos importados con éxito a memoria local!"
-                        except Exception as inner_e:
-                            self.status_label.text = f"Error copiando: {inner_e}"
-
-                    try:
-                        activity.unbind(on_activity_result=on_activity_result)
-                    except Exception:
-                        pass
-
-                activity.bind(on_activity_result=on_activity_result)
-                PythonActivity.mActivity.startActivityForResult(intent, 9999)
-            except Exception as e:
-                self.status_label.text = f"Error lanzando selector: {e}"
-        else:
-            # Fallback en PC para pruebas de desarrollo
-            try:
-                from tkinter import Tk, filedialog
-                root = Tk()
-                root.withdraw()
-                filenames = filedialog.askopenfilenames(title="Seleccionar archivos CSV", filetypes=[("CSV Files", "*.csv")])
-                if filenames:
-                    copied = []
-                    for f in filenames:
-                        dest = os.path.join(self.work_dir, os.path.basename(f))
-                        with open(f, 'rb') as sf, open(dest, 'wb') as df:
-                            df.write(sf.read())
+    def on_files_selected(self, selection):
+        if selection:
+            copied = []
+            for path in selection:
+                try:
+                    if os.path.exists(path):
+                        filename = os.path.basename(path)
+                        dest = os.path.join(self.work_dir, filename)
+                        with open(path, 'rb') as f_in, open(dest, 'wb') as f_out:
+                            f_out.write(f_in.read())
                         copied.append(dest)
-                    self.selected_files = copied
-                    self.path_label.text = f"Cargados: {len(copied)} archivos"
-                    self.status_label.text = "¡Archivos listos en PC!"
-            except Exception as pc_e:
-                self.status_label.text = f"Error PC: {pc_e}"
+                except Exception as ex:
+                    print(f"Error copiando: {ex}")
+            
+            if copied:
+                self.selected_files = copied
+                self.path_label.text = f"Cargados: {len(copied)} archivos .csv"
+                self.status_label.text = "¡Archivos listos para procesar!"
+            else:
+                self.status_label.text = "Error al importar los archivos."
+        else:
+            self.status_label.text = "No se seleccionó ningún archivo."
+
+    def buscar_archivos_locales(self):
+        """Busca automáticamente si ya hay archivos .csv en la carpeta interna de la app."""
+        try:
+            encontrados = []
+            for f in os.listdir(self.work_dir):
+                if f.lower().endswith('.csv'):
+                    encontrados.append(os.path.join(self.work_dir, f))
+            if encontrados:
+                self.selected_files = encontrados
+                self.path_label.text = f"Caché interna: {len(encontrados)} archivos"
+                self.status_label.text = "Archivos locales detectados."
+        except Exception:
+            pass
 
     def ejecutar_proceso(self, instance):
         files = self.selected_files
@@ -449,9 +414,9 @@ class ResumenAppUI(FloatLayout):
         lbl_head = Label(
             text=f"[B]{header_text}[/B]",
             markup=True,
-            font_size=28,
+            font_size=26,
             size_hint_y=None,
-            height=55,
+            height=50,
             color=(0.2, 0.8, 1, 1)
         )
         self.table_grid.add_widget(lbl_head)
@@ -460,9 +425,9 @@ class ResumenAppUI(FloatLayout):
             row_text = " | ".join(str(val) for val in row)
             lbl_row = Label(
                 text=row_text,
-                font_size=26,
+                font_size=24,
                 size_hint_y=None,
-                height=50,
+                height=45,
                 color=(1, 1, 1, 1)
             )
             self.table_grid.add_widget(lbl_row)
